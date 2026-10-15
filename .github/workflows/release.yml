@@ -69,4 +69,5 @@ jobs:
           if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
             RAW_TAG="${{ inputs.tag }}"
           fi
+          gh release view "$RAW_TAG" || gh release create "$RAW_TAG" --title "$RAW_TAG" --notes "Release $RAW_TAG"
           gh release upload "$RAW_TAG" "${ARCHIVE_NAME}" "${ARCHIVE_NAME}.sha256" --clobber
