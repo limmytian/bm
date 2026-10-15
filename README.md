@@ -25,7 +25,13 @@ Both **Google Chrome** and **Microsoft Edge** are natively supported.
 
 ### 1. Installation
 
-Ensure you have Rust installed, then clone and install locally:
+#### Via Homebrew (Recommended on macOS/Linux)
+
+```bash
+brew install limmytian/tap/bm
+```
+
+#### Via Cargo (From Source)
 
 ```bash
 git clone https://github.com/limmytian/bm.git
