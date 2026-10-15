@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release Tag (e.g. v0.0.1)'
+        required: true
+        default: 'v0.0.1'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            os_name: darwin
+            arch_name: arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            os_name: darwin
+            arch_name: x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch_name: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package archive
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
+            RAW_TAG="${{ inputs.tag }}"
+          fi
+          VERSION="${RAW_TAG#v}"
+          ARCHIVE_NAME="bm-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch_name }}.tar.gz"
+          
+          cd "target/${{ matrix.target }}/release"
+          tar -czf "../../../${ARCHIVE_NAME}" bm
+          cd ../../..
+          
+          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
+
+      - name: Upload to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
+            RAW_TAG="${{ inputs.tag }}"
+          fi
+          gh release upload "$RAW_TAG" "${ARCHIVE_NAME}" "${ARCHIVE_NAME}.sha256" --clobber
