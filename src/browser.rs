@@ -141,20 +141,37 @@ impl Browser {
     /// Gracefully or forcefully terminate running browser processes.
     pub fn terminate(&self) -> Result<()> {
         let process_name = match self {
-            Browser::Chrome => "Google Chrome",
-            Browser::Edge => "Microsoft Edge",
+            Browser::Chrome => {
+                if cfg!(target_os = "macos") {
+                    "Google Chrome"
+                } else {
+                    "chrome"
+                }
+            }
+            Browser::Edge => {
+                if cfg!(target_os = "macos") {
+                    "Microsoft Edge"
+                } else {
+                    "msedge"
+                }
+            }
         };
 
-        let status = Command::new("killall")
+        // Try pkill -f first (standard across macOS and modern Linux)
+        let status = Command::new("pkill")
+            .arg("-f")
             .arg(process_name)
             .status();
 
         match status {
             Ok(_) => Ok(()),
-            Err(e) => Err(BmError::Other(format!(
-                "Failed to terminate browser process: {}",
-                e
-            ))),
+            Err(_) => {
+                // Fallback to killall if pkill is absent
+                let _ = Command::new("killall")
+                    .arg(process_name)
+                    .status();
+                Ok(())
+            }
         }
     }
 }
