@@ -1,6 +1,17 @@
-# bm: Browser Profile & Session Sandbox Manager
+<p align="center">
+  <img src="assets/bm-light.png" width="220" alt="bm Logo" />
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+<h1 align="center">bm</h1>
+
+<p align="center">
+  <strong>Browser Profile & Session Sandbox Manager for Chrome & Edge</strong>
+</p>
+
+<p align="center">
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/limmytian/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-limmytian%2Ftap-orange.svg" alt="Homebrew Tap"></a>
+</p>
 
 `bm` is an ultra-fast, lightweight CLI written in Rust to manage, isolate, switch, and launch browser user profiles (sessions, cookies, local storage, history) in a **conda-like workflow**.
 
