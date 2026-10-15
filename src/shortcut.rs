@@ -154,6 +154,32 @@ impl ShortcutGenerator {
         perms.set_mode(0o755);
         fs::set_permissions(&script_file, perms)?;
 
+        // Also create an XDG .desktop entry for Linux desktop environments (GNOME, KDE, etc.)
+        if let Some(home) = dirs::home_dir() {
+            let apps_dir = home.join(".local/share/applications");
+            if fs::create_dir_all(&apps_dir).is_ok() {
+                let desktop_file = apps_dir.join(format!("bm-{}-{}.desktop", browser, profile_name));
+                let display_browser = browser.display_name();
+                let icon_name = match browser {
+                    Browser::Chrome => "google-chrome",
+                    Browser::Edge => "microsoft-edge",
+                };
+                let desktop_content = format!(
+                    "[Desktop Entry]\n\
+Version=1.0\n\
+Type=Application\n\
+Name={display_browser} ({profile_name})\n\
+Comment=Launch {display_browser} profile {profile_name}\n\
+Exec=\"{}\" %U\n\
+Icon={icon_name}\n\
+Terminal=false\n\
+Categories=Network;WebBrowser;\n",
+                    script_file.display()
+                );
+                let _ = fs::write(desktop_file, desktop_content);
+            }
+        }
+
         Ok(script_file)
     }
 }
