@@ -6,7 +6,7 @@ use crate::browser::Browser;
 #[command(
     name = "bm",
     author = "limmytian <limmytian@gmail.com>",
-    version = "0.0.1",
+    version,
     about = "Browser Profile Manager - Conda-like session & profile manager for Chrome and Edge",
     long_about = "bm is a lightweight CLI to manage, switch, and launch browser user profiles (sessions, cookies, local storage, history) in a conda-like workflow."
 )]
