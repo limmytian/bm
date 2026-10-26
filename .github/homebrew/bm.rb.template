@@ -1,0 +1,50 @@
+# Homebrew formula for bm — GENERATED CONTENT, DO NOT EDIT BY HAND.
+# Source of truth: limmytian/bm repo (.github/homebrew/bm.rb.template).
+# The release workflow renders version + sha256 and pushes updates here.
+class Bm < Formula
+  desc "Browser profile and session sandbox manager for Chrome and Edge"
+  homepage "https://github.com/limmytian/bm"
+  version "__VERSION__"
+  license "Apache-2.0"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/limmytian/bm/releases/download/v__VERSION__/bm-__VERSION__-darwin-arm64.tar.gz"
+      sha256 "__SHA_DARWIN_ARM64__"
+    else
+      url "https://github.com/limmytian/bm/releases/download/v__VERSION__/bm-__VERSION__-darwin-x64.tar.gz"
+      sha256 "__SHA_DARWIN_X64__"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "https://github.com/limmytian/bm/releases/download/v__VERSION__/bm-__VERSION__-linux-arm64.tar.gz"
+      sha256 "__SHA_LINUX_ARM64__"
+    elsif Hardware::CPU.intel?
+      url "https://github.com/limmytian/bm/releases/download/v__VERSION__/bm-__VERSION__-linux-x64.tar.gz"
+      sha256 "__SHA_LINUX_X64__"
+    end
+  end
+
+  def install
+    bin.install "bm"
+  end
+
+  def caveats
+    <<~EOS
+      bm v#{version} installed successfully!
+
+      Quick start:
+        bm list                    # List all managed profiles
+        bm create work             # Create a clean isolated profile
+        bm switch work             # Activate profile via symlink (conda-like)
+        bm shortcut work           # Generate standalone desktop launcher
+        bm proxy set work --server socks5://127.0.0.1:1080   # Per-profile egress proxy
+    EOS
+  end
+
+  test do
+    assert_match "bm #{version}", shell_output("#{bin}/bm --version")
+  end
+end
