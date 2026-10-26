@@ -146,6 +146,13 @@ pub enum Commands {
         fix: bool,
     },
 
+    /// Generate shell completions (bash, zsh, fish, powershell, nushell)
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+
     /// Manage the per-profile egress proxy
     Proxy {
         #[command(subcommand)]

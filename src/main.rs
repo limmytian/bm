@@ -526,6 +526,12 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
 
+        Commands::Completions { shell } => {
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "bm", &mut std::io::stdout());
+        }
+
         Commands::Proxy { action } => match action {
             ProxyAction::Set { name, server, bypass } => {
                 let cfg = ProxyConfig::parse(&server, bypass.as_deref())?;

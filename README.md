@@ -196,6 +196,19 @@ bm delete old-profile
 bm delete test-profile --yes   # Skip confirmation prompt
 ```
 
+### Shell Completions
+Generate completions from the live CLI definition (stays in sync with every subcommand and flag):
+```bash
+# bash
+bm completions bash > ~/.local/share/bash-completion/completions/bm
+
+# zsh
+bm completions zsh > ~/.zfunc/_bm   # ensure ~/.zfunc is in $fpath before compinit
+
+# fish
+bm completions fish > ~/.config/fish/completions/bm.fish
+```
+
 ---
 
 ## 📂 Architecture & Directory Layout
