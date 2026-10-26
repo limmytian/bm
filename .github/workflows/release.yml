@@ -15,28 +15,18 @@ permissions:
   contents: write
 
 jobs:
-  build-release:
-    name: Build (${{ matrix.target }})
+  build-linux:
+    name: Build (linux-${{ matrix.arch_name }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            os_name: darwin
-            arch_name: arm64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            os_name: darwin
-            arch_name: x64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            os_name: linux
             arch_name: x64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            os_name: linux
             arch_name: arm64
     steps:
       - uses: actions/checkout@v4
@@ -48,26 +38,24 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package archive
-        shell: bash
         run: |
           RAW_TAG="${{ github.ref_name }}"
           if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
             RAW_TAG="${{ inputs.tag }}"
           fi
           VERSION="${RAW_TAG#v}"
-          ARCHIVE_NAME="bm-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch_name }}.tar.gz"
-          
+          ARCHIVE_NAME="bm-${VERSION}-linux-${{ matrix.arch_name }}.tar.gz"
+
           cd "target/${{ matrix.target }}/release"
           tar -czf "../../../${ARCHIVE_NAME}" bm
           cd ../../..
-          
+
           shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
       - name: Upload to GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
+          GH_TOKEN: ${{ github.token }}
         run: |
           RAW_TAG="${{ github.ref_name }}"
           if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
@@ -76,9 +64,44 @@ jobs:
           gh release view "$RAW_TAG" || gh release create "$RAW_TAG" --title "$RAW_TAG" --notes "Release $RAW_TAG"
           gh release upload "$RAW_TAG" "${ARCHIVE_NAME}" "${ARCHIVE_NAME}.sha256" --clobber
 
+  build-macos:
+    name: Build (darwin arm64 + x64)
+    # One runner builds both Apple targets (arm64 native, x64 cross-compiled
+    # with the Apple toolchain) — halves macOS runner demand in the free
+    # tier, where queue cancellations under capacity pressure are common.
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build, package and upload both architectures
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
+            RAW_TAG="${{ inputs.tag }}"
+          fi
+          VERSION="${RAW_TAG#v}"
+
+          gh release view "$RAW_TAG" >/dev/null 2>&1 || gh release create "$RAW_TAG" --title "$RAW_TAG" --notes "Release $RAW_TAG"
+
+          for pair in "aarch64-apple-darwin arm64" "x86_64-apple-darwin x64"; do
+            set -- $pair
+            TARGET="$1"; ARCH="$2"
+            cargo build --release --target "$TARGET"
+            ARCHIVE_NAME="bm-${VERSION}-darwin-${ARCH}.tar.gz"
+            tar -czf "$ARCHIVE_NAME" -C "target/${TARGET}/release" bm
+            shasum -a 256 "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
+            gh release upload "$RAW_TAG" "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256" --clobber
+            rm -f "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256"
+          done
+
   update-tap:
     name: Update homebrew-tap formula
-    needs: build-release
+    needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
