@@ -33,6 +33,23 @@ impl Browser {
         }
     }
 
+    /// macOS managed-policy domain (`defaults`) of this browser.
+    pub fn policy_domain(&self) -> &'static str {
+        match self {
+            Browser::Chrome => "com.google.Chrome",
+            Browser::Edge => "com.microsoft.Edge",
+        }
+    }
+
+    /// XDG desktop entry id of this browser on Linux.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn linux_desktop_file(&self) -> &'static str {
+        match self {
+            Browser::Chrome => "google-chrome.desktop",
+            Browser::Edge => "microsoft-edge.desktop",
+        }
+    }
+
     /// Return the default system user data directory for this browser.
     pub fn default_data_dir(&self) -> Result<PathBuf> {
         let home = dirs::home_dir().ok_or_else(|| {

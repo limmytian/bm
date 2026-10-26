@@ -17,6 +17,9 @@ pub enum BmError {
     #[error("Browser '{browser}' is currently running. Please close it before switching profiles (or use --force).")]
     BrowserRunning { browser: String },
 
+    #[error("Invalid proxy configuration: {0}")]
+    InvalidProxy(String),
+
     #[error("Platform unsupported: {0}")]
     UnsupportedPlatform(String),
 

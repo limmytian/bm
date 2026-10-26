@@ -5,7 +5,60 @@ use std::process::Command;
 
 use crate::browser::Browser;
 use crate::error::{BmError, Result};
+use crate::proxy::{ProxyConfig, ProxyScheme};
 use crate::storage::StorageManager;
+
+/// Chromium launch flags enforcing the profile's egress proxy: the proxy
+/// server itself, optional bypass rules, and WebRTC leak protection
+/// (non-proxied UDP disabled). SOCKS5 additionally pins hostname resolution
+/// to the proxy so DNS never leaks to the local resolver.
+///
+/// The returned string starts with a leading space (or is empty) so it can
+/// be interpolated directly after other flags. Shared by standalone
+/// shortcuts and the Linux desktop-override policy sync.
+pub(crate) fn proxy_launch_flags(proxy: Option<&ProxyConfig>) -> String {
+    let Some(p) = proxy else {
+        return String::new();
+    };
+
+    let mut flags = format!(" --proxy-server=\"{}\"", p.server_string());
+    if let Some(bypass) = p.bypass_string() {
+        flags.push_str(&format!(" --proxy-bypass-list=\"{}\"", bypass));
+    }
+    flags.push_str(" --force-webrtc-ip-handling-policy=disable_non_proxied_udp");
+    if p.scheme == ProxyScheme::Socks5 {
+        let host = if p.host.contains(':') {
+            format!("[{}]", p.host)
+        } else {
+            p.host.clone()
+        };
+        flags.push_str(&format!(
+            " --host-resolver-rules=\"MAP * ~NOTFOUND , EXCLUDE {}\"",
+            host
+        ));
+    }
+    flags
+}
+
+/// Pre-launch guard embedded in macOS launchers: a managed policy
+/// (written by bm for the globally active profile) overrides
+/// `--proxy-server` flags, so warn when this launcher's own proxy differs
+/// from the currently active policy. Empty when no proxy is configured.
+fn macos_policy_conflict_check(browser: Browser, proxy: Option<&ProxyConfig>) -> String {
+    let Some(p) = proxy else {
+        return String::new();
+    };
+    let own = p.server_string();
+    format!(
+        "# bm: macOS managed policy overrides --proxy-server flags; warn on mismatch.\n\
+         ACTIVE_POLICY=$(defaults read {domain} ProxyServer 2>/dev/null || true)\n\
+         if [ -n \"$ACTIVE_POLICY\" ] && [ \"$ACTIVE_POLICY\" != '{own}' ]; then\n\
+         \x20 echo \"WARNING: this launcher's proxy {own} is overridden by managed policy ProxyServer=$ACTIVE_POLICY (bm active profile). This window may use the wrong egress; fix with 'bm proxy clear <active-profile>' or 'bm switch'.\" >&2\n\
+         fi\n",
+        domain = browser.policy_domain(),
+        own = own
+    )
+}
 
 pub struct ShortcutGenerator;
 
@@ -25,10 +78,22 @@ impl ShortcutGenerator {
             });
         }
 
+        // Proxy config lives in profile metadata; profiles that exist only as
+        // folders (no metadata) simply launch without a proxy.
+        let proxy = storage
+            .list_profiles(browser)
+            .ok()
+            .and_then(|profiles| {
+                profiles
+                    .into_iter()
+                    .find(|(m, _)| m.name == profile_name)
+                    .and_then(|(m, _)| m.proxy)
+            });
+
         if cfg!(target_os = "macos") {
-            Self::create_macos_app_bundle(browser, profile_name, &profile_dir, dest_dir)
+            Self::create_macos_app_bundle(browser, profile_name, &profile_dir, proxy.as_ref(), dest_dir)
         } else {
-            Self::create_linux_script(storage, browser, profile_name, &profile_dir, dest_dir)
+            Self::create_linux_script(storage, browser, profile_name, &profile_dir, proxy.as_ref(), dest_dir)
         }
     }
 
@@ -37,6 +102,7 @@ impl ShortcutGenerator {
         browser: Browser,
         profile_name: &str,
         profile_dir: &Path,
+        proxy: Option<&ProxyConfig>,
         dest_dir: Option<&Path>,
     ) -> Result<PathBuf> {
         let home = dirs::home_dir().ok_or_else(|| {
@@ -80,9 +146,11 @@ impl ShortcutGenerator {
         let launcher_path = macos_dir.join("launcher");
 
         let script = format!(
-            "#!/bin/sh\nexec \"{}\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n",
+            "#!/bin/sh\n{}exec \"{}\" --user-data-dir=\"{}\" --no-first-run{} \"$@\"\n",
+            macos_policy_conflict_check(browser, proxy),
             binary_path.display(),
-            profile_dir.display()
+            profile_dir.display(),
+            proxy_launch_flags(proxy)
         );
 
         fs::write(&launcher_path, script)?;
@@ -132,6 +200,7 @@ impl ShortcutGenerator {
         browser: Browser,
         profile_name: &str,
         profile_dir: &Path,
+        proxy: Option<&ProxyConfig>,
         dest_dir: Option<&Path>,
     ) -> Result<PathBuf> {
         let shortcuts_dir = match dest_dir {
@@ -144,9 +213,10 @@ impl ShortcutGenerator {
         let binary_path = browser.binary_path()?;
 
         let script = format!(
-            "#!/bin/sh\nexec \"{}\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n",
+            "#!/bin/sh\nexec \"{}\" --user-data-dir=\"{}\" --no-first-run{} \"$@\"\n",
             binary_path.display(),
-            profile_dir.display()
+            profile_dir.display(),
+            proxy_launch_flags(proxy)
         );
 
         fs::write(&script_file, script)?;
@@ -181,5 +251,43 @@ Categories=Network;WebBrowser;\n",
         }
 
         Ok(script_file)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_proxy_yields_no_flags() {
+        assert_eq!(proxy_launch_flags(None), "");
+    }
+
+    #[test]
+    fn http_proxy_flags() {
+        let p = ProxyConfig::parse("http://proxy.corp:8080", Some("localhost;*.lan")).unwrap();
+        let flags = proxy_launch_flags(Some(&p));
+        assert!(flags.contains("--proxy-server=\"http://proxy.corp:8080\""));
+        assert!(flags.contains("--proxy-bypass-list=\"localhost,*.lan\""));
+        assert!(flags.contains("--force-webrtc-ip-handling-policy=disable_non_proxied_udp"));
+        // DNS pinning is SOCKS5-only
+        assert!(!flags.contains("--host-resolver-rules"));
+    }
+
+    #[test]
+    fn socks5_proxy_pins_dns() {
+        let p = ProxyConfig::parse("socks5://127.0.0.1:1080", None).unwrap();
+        let flags = proxy_launch_flags(Some(&p));
+        assert!(flags.contains("--proxy-server=\"socks5://127.0.0.1:1080\""));
+        assert!(flags.contains("--host-resolver-rules=\"MAP * ~NOTFOUND , EXCLUDE 127.0.0.1\""));
+        // No bypass configured -> no bypass flag
+        assert!(!flags.contains("--proxy-bypass-list"));
+    }
+
+    #[test]
+    fn socks5_ipv6_proxy_excludes_bracketed_host() {
+        let p = ProxyConfig::parse("socks5://[::1]:1080", None).unwrap();
+        let flags = proxy_launch_flags(Some(&p));
+        assert!(flags.contains("EXCLUDE [::1]"));
     }
 }

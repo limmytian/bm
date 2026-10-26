@@ -1,6 +1,8 @@
 mod browser;
 mod cli;
 mod error;
+mod policy;
+mod proxy;
 mod shortcut;
 mod storage;
 
@@ -8,8 +10,9 @@ use std::io::{self, Write};
 use clap::Parser;
 use colored::Colorize;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, ProxyAction};
 use crate::error::Result;
+use crate::proxy::ProxyConfig;
 use crate::shortcut::ShortcutGenerator;
 use crate::storage::StorageManager;
 
@@ -49,13 +52,14 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             println!(
-                "  {:<3} {:<18} {:<32} {}",
+                "  {:<3} {:<18} {:<32} {:<24} {}",
                 "ACT",
                 "NAME".bold(),
                 "DESCRIPTION".bold(),
+                "PROXY".bold(),
                 "CREATED".bold()
             );
-            println!("  {}", "-".repeat(72).dimmed());
+            println!("  {}", "-".repeat(96).dimmed());
 
             for (meta, is_active) in profiles {
                 let act_marker = if is_active {
@@ -78,13 +82,19 @@ fn run(cli: Cli) -> Result<()> {
                     meta.description.clone()
                 };
 
+                let proxy_display = match &meta.proxy {
+                    Some(p) => truncate(&p.to_string(), 22).cyan().to_string(),
+                    None => "-".dimmed().to_string(),
+                };
+
                 let created_str = meta.created_at.format("%Y-%m-%d %H:%M").to_string();
 
                 println!(
-                    "  {:<3} {:<18} {:<32} {}",
+                    "  {:<3} {:<18} {:<32} {:<24} {}",
                     act_marker,
                     name_display,
                     desc_display,
+                    proxy_display,
                     created_str.dimmed()
                 );
             }
@@ -99,6 +109,16 @@ fn run(cli: Cli) -> Result<()> {
                         browser.display_name().cyan(),
                         name.green().bold()
                     );
+                    if let Some((meta, _)) = storage
+                        .list_profiles(browser)?
+                        .into_iter()
+                        .find(|(m, _)| m.name == name)
+                    {
+                        match &meta.proxy {
+                            Some(p) => println!("Egress proxy: {}", p.to_string().cyan().bold()),
+                            None => println!("Egress proxy: {}", "none".dimmed()),
+                        }
+                    }
                 }
                 None => {
                     println!(
@@ -147,6 +167,23 @@ fn run(cli: Cli) -> Result<()> {
                 name.green().bold()
             );
             println!("All default browser launches (Dock, links, Spotlight) will now use this profile.");
+
+            // Global-launch proxy follows the active profile (managed policy
+            // on macOS, .desktop override on Linux).
+            policy::sync_for_active_profile(&storage, browser)?;
+            if let Some((meta, _)) = storage
+                .list_profiles(browser)?
+                .into_iter()
+                .find(|(m, _)| m.name == name)
+            {
+                if let Some(p) = &meta.proxy {
+                    println!(
+                        "{} Egress proxy active for global launches — effective on the next browser start.",
+                        "Note:".blue().bold()
+                    );
+                    warn_side_by_side_override(&storage, browser, p);
+                }
+            }
         }
 
         Commands::Describe { name, note } => {
@@ -195,7 +232,156 @@ fn run(cli: Cli) -> Result<()> {
             println!("  {}", shortcut_path.display().to_string().cyan().bold());
             println!("You can run this launcher directly to open profile '{}' independently.", name.bold());
         }
+
+        Commands::Proxy { action } => match action {
+            ProxyAction::Set { name, server, bypass } => {
+                let cfg = ProxyConfig::parse(&server, bypass.as_deref())?;
+                let meta = storage.set_proxy(&name, browser, Some(cfg))?;
+
+                println!(
+                    "{} Proxy for profile '{}' set to {}.",
+                    "Success:".green().bold(),
+                    meta.name.bold(),
+                    meta.proxy.as_ref().unwrap().to_string().cyan().bold()
+                );
+                let is_active = is_active_profile(&storage, browser, &meta.name);
+                if is_active {
+                    policy::sync_for_active_profile(&storage, browser)?;
+                }
+                print_proxy_followup(&meta.name, is_active);
+            }
+
+            ProxyAction::Show { name } => {
+                let profiles = storage.list_profiles(browser)?;
+                match name {
+                    Some(name) => {
+                        let (meta, is_active) = profiles.into_iter().find(|(m, _)| m.name == name)
+                            .ok_or_else(|| crate::error::BmError::ProfileNotFound {
+                                name: name.clone(),
+                                browser: browser.display_name().to_string(),
+                            })?;
+                        println!(
+                            "Proxy for {} profile '{}'{}:",
+                            browser.display_name().cyan(),
+                            if is_active { meta.name.green().bold().to_string() } else { meta.name.bold().to_string() },
+                            if is_active { " (active)" } else { "" }
+                        );
+                        match &meta.proxy {
+                            Some(p) => {
+                                println!("  Server: {}", p.to_string().cyan().bold());
+                                match p.bypass_string() {
+                                    Some(b) => println!("  Bypass: {}", b),
+                                    None => println!("  Bypass: {}", "-".dimmed()),
+                                }
+                            }
+                            None => println!("  {}", "No proxy configured.".dimmed()),
+                        }
+                    }
+                    None => {
+                        println!(
+                            "{} for {}:",
+                            "Proxy Configuration".bold(),
+                            browser.display_name().cyan().bold()
+                        );
+                        println!("  {:<18} {:<28} {}", "NAME".bold(), "SERVER".bold(), "BYPASS".bold());
+                        println!("  {}", "-".repeat(64).dimmed());
+                        for (meta, is_active) in profiles {
+                            let (server, bypass) = match &meta.proxy {
+                                Some(p) => (
+                                    truncate(&p.to_string(), 26),
+                                    p.bypass_string().unwrap_or_else(|| "-".into()),
+                                ),
+                                None => ("-".dimmed().to_string(), "-".dimmed().to_string()),
+                            };
+                            let name_display = if is_active {
+                                format!("{} {}", meta.name, "*".green().bold())
+                            } else {
+                                meta.name.clone()
+                            };
+                            println!("  {:<18} {:<28} {}", name_display, server, bypass);
+                        }
+                    }
+                }
+            }
+
+            ProxyAction::Clear { name } => {
+                let meta = storage.set_proxy(&name, browser, None)?;
+                println!(
+                    "{} Proxy removed from profile '{}'.",
+                    "Success:".green().bold(),
+                    meta.name.bold()
+                );
+                let is_active = is_active_profile(&storage, browser, &meta.name);
+                if is_active {
+                    policy::sync_for_active_profile(&storage, browser)?;
+                }
+                print_proxy_followup(&meta.name, is_active);
+            }
+        },
     }
 
     Ok(())
+}
+
+/// Truncate a string to `max` characters (char-boundary safe) with an ellipsis.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let kept: String = s.chars().take(max.saturating_sub(2)).collect();
+        format!("{}...", kept)
+    }
+}
+
+/// Shared hints after `bm proxy set/clear`.
+fn print_proxy_followup(name: &str, is_active: bool) {
+    if is_active {
+        println!(
+            "{} '{}' is the active profile — global-launch proxy policy updated (restart the browser to apply).",
+            "Note:".blue().bold(),
+            name.yellow().bold()
+        );
+    }
+    println!(
+        "Existing standalone shortcuts for '{}' were generated with the previous flags — regenerate them with {} to apply the proxy there too.",
+        name.bold(),
+        format!("bm shortcut {}", name).green()
+    );
+}
+
+fn is_active_profile(storage: &StorageManager, browser: crate::browser::Browser, name: &str) -> bool {
+    storage
+        .get_current_active(browser)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some(name)
+}
+
+/// On macOS the active profile's managed policy overrides the proxy flags of
+/// side-by-side shortcut launches of the same browser (policy > command line
+/// in Chromium). Warn when another profile also carries a proxy, since those
+/// shortcuts would silently ride the active profile's egress.
+fn warn_side_by_side_override(
+    storage: &StorageManager,
+    browser: crate::browser::Browser,
+    active_proxy: &ProxyConfig,
+) {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    let conflicting = storage
+        .list_profiles(browser)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, is_active)| !*is_active)
+        .filter_map(|(m, _)| m.proxy)
+        .any(|p| p != *active_proxy);
+    if conflicting {
+        println!(
+            "{} Other profiles also carry a proxy. While this profile is active, macOS managed policy overrides their shortcut proxies — side-by-side launches will use {} instead. Activate the other profile (or clear this proxy) before using them.",
+            "Warning:".yellow().bold(),
+            active_proxy.to_string().yellow()
+        );
+    }
 }

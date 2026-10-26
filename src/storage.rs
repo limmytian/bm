@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::browser::Browser;
 use crate::error::{BmError, Result};
+use crate::proxy::ProxyConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileMetadata {
@@ -14,6 +15,10 @@ pub struct ProfileMetadata {
     pub description: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Optional per-profile egress proxy. Absent in registries created
+    /// before proxy support; `#[serde(default)]` keeps those loadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<ProxyConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -135,6 +140,7 @@ impl StorageManager {
             description: description.unwrap_or("").trim().to_string(),
             created_at: now,
             updated_at: now,
+            proxy: None,
         };
 
         let mut reg = self.load_registry()?;
@@ -207,6 +213,7 @@ impl StorageManager {
                                     description: String::new(),
                                     created_at: now,
                                     updated_at: now,
+                                    proxy: None,
                                 }
                             }
                         };
@@ -252,6 +259,53 @@ impl StorageManager {
                     description: note.trim().to_string(),
                     created_at: now,
                     updated_at: now,
+                    proxy: None,
+                };
+                reg.profiles.insert(key, m.clone());
+                m
+            }
+        };
+
+        self.save_registry(&reg)?;
+        Ok(meta)
+    }
+
+    /// Set or clear the per-profile egress proxy.
+    /// Passing `None` removes the proxy configuration.
+    pub fn set_proxy(
+        &self,
+        name: &str,
+        browser: Browser,
+        proxy: Option<ProxyConfig>,
+    ) -> Result<ProfileMetadata> {
+        let target_dir = self.profile_dir(browser, name);
+        if !target_dir.exists() {
+            return Err(BmError::ProfileNotFound {
+                name: name.to_string(),
+                browser: browser.display_name().to_string(),
+            });
+        }
+
+        let mut reg = self.load_registry()?;
+        let key = Self::registry_key(browser, name);
+        let now = Utc::now();
+
+        let meta = match reg.profiles.get_mut(&key) {
+            Some(m) => {
+                m.proxy = proxy;
+                m.updated_at = now;
+                m.clone()
+            }
+            None => {
+                // Folder exists but has no metadata yet (e.g. created outside
+                // bm): synthesize a record, mirroring describe_profile.
+                let m = ProfileMetadata {
+                    name: name.to_string(),
+                    browser,
+                    description: String::new(),
+                    created_at: now,
+                    updated_at: now,
+                    proxy,
                 };
                 reg.profiles.insert(key, m.clone());
                 m
@@ -342,6 +396,7 @@ impl StorageManager {
                                 .to_string(),
                             created_at: now,
                             updated_at: now,
+                            proxy: None,
                         },
                     );
                     let _ = self.save_registry(&reg);

@@ -29,6 +29,7 @@ Both **Google Chrome** and **Microsoft Edge** are natively supported.
 * **Running Process Guard**: Warns or terminates running browser instances to prevent SQLite database locks when switching.
 * **Standalone Desktop Shortcuts**: `bm shortcut <name>` generates an independent macOS `.app` bundle or Linux launcher script, allowing you to run multiple accounts side-by-side without mutating the globally active symlink.
 * **Multi-Browser Support**: Seamlessly manage Google Chrome and Microsoft Edge environments with `--browser chrome` or `--browser edge`.
+* **Per-Profile Egress Proxy**: Route each environment through its own SOCKS5/HTTP(S) proxy with WebRTC leak protection and SOCKS5 DNS pinning. Honored by standalone shortcuts out of the box and by globally activated launches via Chrome/Edge managed policy (macOS).
 
 ---
 
@@ -102,6 +103,20 @@ Create a standalone application launcher (e.g., `Chrome (work).app` on macOS) th
 bm shortcut work
 bm shortcut staging --browser edge
 ```
+
+### Manage Per-Profile Proxy
+Each profile can route traffic through its own egress proxy (SOCKS5, HTTP, or HTTPS):
+```bash
+bm proxy set work --server socks5://127.0.0.1:1080
+bm proxy set work --server http://proxy.corp.example:8080 --bypass "localhost,*.lan"
+bm proxy show            # one profile or all
+bm proxy clear work
+```
+* Standalone shortcuts inject the proxy automatically — regenerate them with `bm shortcut <name>` after changing a profile's proxy.
+* For the **globally active** profile, `bm` applies the proxy through Chrome/Edge managed policy on macOS (Dock, Spotlight, and link-click launches honor it too); `bm switch` and `bm proxy set/clear` keep it in sync. On Linux a user-level `.desktop` override carries the flags for desktop launches.
+* SOCKS5 proxies additionally pin DNS resolution to the proxy, and non-proxied UDP (WebRTC) is disabled to prevent real-IP leaks.
+
+> **Positioning:** this is per-profile egress management, not browser fingerprint spoofing. Timezone, language, and device fingerprints remain native. For anti-association multi-account operation on strict platforms, use a dedicated anti-detect browser instead.
 
 ### Delete a Profile
 Safely delete a profile and its underlying data (active profile is protected from accidental deletion):

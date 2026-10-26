@@ -75,4 +75,39 @@ pub enum Commands {
         #[arg(short, long)]
         dest: Option<PathBuf>,
     },
+
+    /// Manage the per-profile egress proxy
+    Proxy {
+        #[command(subcommand)]
+        action: ProxyAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProxyAction {
+    /// Set the egress proxy for a profile
+    Set {
+        /// Name of the profile
+        name: String,
+
+        /// Proxy server as <scheme>://<host>:<port> (scheme: socks5, http, https)
+        #[arg(short, long)]
+        server: String,
+
+        /// Comma-separated hosts that bypass the proxy (e.g. "localhost,*.lan")
+        #[arg(long)]
+        bypass: Option<String>,
+    },
+
+    /// Show the proxy configuration of one or all profiles
+    Show {
+        /// Optional profile name; omit to show every profile
+        name: Option<String>,
+    },
+
+    /// Remove the proxy configuration from a profile
+    Clear {
+        /// Name of the profile
+        name: String,
+    },
 }
