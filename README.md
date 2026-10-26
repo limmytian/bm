@@ -82,6 +82,16 @@ bm create personal --note "Personal entertainment and social media"
 bm create staging --browser edge --note "Edge testing sandbox"
 ```
 
+### Clone a Profile (Same Machine)
+Duplicate an existing profile with its sessions and cookies — ideal for experimenting on a copy. Intentionally local-only: no cross-machine sync:
+```bash
+bm clone work work-experiment
+bm clone work sandbox --no-proxy   # without the source's egress proxy
+bm clone work archive --full       # include regenerable caches (slower)
+```
+* Regenerable caches (HTTP/GPU/shader caches, crash dumps, component stores) are skipped by default — sessions, cookies, history, logins, and extensions come along.
+* Cloning refuses to run while the browser is running (same guard as `bm switch`) to avoid copying mid-write databases.
+
 ### Switch Active Profile (Conda-like Activation)
 Switch the globally active browser profile:
 ```bash

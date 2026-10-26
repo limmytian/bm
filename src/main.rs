@@ -1,4 +1,5 @@
 mod browser;
+mod cache;
 mod cli;
 mod error;
 mod open;
@@ -142,6 +143,30 @@ fn run(cli: Cli) -> Result<()> {
             );
             println!(
                 "To activate it, run: {}",
+                format!("bm switch {} --browser {}", meta.name, browser).green()
+            );
+        }
+
+        Commands::Clone { src, dst, full, no_proxy } => {
+            let (meta, copied) = storage.clone_profile(&src, &dst, browser, full, !no_proxy)?;
+            println!(
+                "{} Cloned profile '{}' → '{}' ({} files).",
+                "Success:".green().bold(),
+                src.bold(),
+                meta.name.bold(),
+                copied
+            );
+            if !full {
+                println!(
+                    "Regenerable caches were skipped for a fast copy — use {} for a byte-exact one.",
+                    "--full".green()
+                );
+            }
+            if no_proxy {
+                println!("{} Egress proxy not carried over ({}).", "Note:".blue().bold(), "--no-proxy".green());
+            }
+            println!(
+                "To activate the clone, run: {}",
                 format!("bm switch {} --browser {}", meta.name, browser).green()
             );
         }

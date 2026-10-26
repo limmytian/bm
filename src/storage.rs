@@ -439,4 +439,247 @@ impl StorageManager {
 
         Ok(backup_created)
     }
+
+    /// Duplicate a profile on the same machine: sessions, cookies and other
+    /// valuable state survive; regenerable caches are skipped unless `full`
+    /// (see src/cache.rs). The destination registry entry carries the
+    /// source's description and egress proxy unless `carry_proxy` is false.
+    /// This is intentionally a local-machine operation — no cross-machine
+    /// sync.
+    pub fn clone_profile(
+        &self,
+        src: &str,
+        dst: &str,
+        browser: Browser,
+        full: bool,
+        carry_proxy: bool,
+    ) -> Result<(ProfileMetadata, usize)> {
+        if browser.is_running() {
+            return Err(BmError::BrowserRunning {
+                browser: browser.display_name().to_string(),
+            });
+        }
+        self.clone_profile_unchecked(src, dst, browser, full, carry_proxy)
+    }
+
+    /// Clone without the running-browser guard; separate so tests can run
+    /// against `is_running`'s process-table dependency.
+    pub(crate) fn clone_profile_unchecked(
+        &self,
+        src: &str,
+        dst: &str,
+        browser: Browser,
+        full: bool,
+        carry_proxy: bool,
+    ) -> Result<(ProfileMetadata, usize)> {
+        Self::validate_name(src)?;
+        Self::validate_name(dst)?;
+
+        let src_dir = self.profile_dir(browser, src);
+        if !src_dir.exists() {
+            return Err(BmError::ProfileNotFound {
+                name: src.to_string(),
+                browser: browser.display_name().to_string(),
+            });
+        }
+        let dst_dir = self.profile_dir(browser, dst);
+        if dst_dir.exists() {
+            return Err(BmError::ProfileAlreadyExists {
+                name: dst.to_string(),
+                browser: browser.display_name().to_string(),
+            });
+        }
+
+        self.ensure_dirs(browser)?;
+        fs::create_dir_all(&dst_dir)?;
+        let copied = copy_tree(&src_dir, &dst_dir, Path::new(""), !full)?;
+
+        let source = self
+            .load_registry()?
+            .profiles
+            .get(&Self::registry_key(browser, src))
+            .cloned();
+        let now = Utc::now();
+        let meta = ProfileMetadata {
+            name: dst.to_string(),
+            browser,
+            description: source
+                .as_ref()
+                .map(|m| m.description.clone())
+                .unwrap_or_default(),
+            created_at: now,
+            updated_at: now,
+            proxy: if carry_proxy {
+                source.and_then(|m| m.proxy)
+            } else {
+                None
+            },
+        };
+
+        let mut reg = self.load_registry()?;
+        reg.profiles
+            .insert(Self::registry_key(browser, dst), meta.clone());
+        self.save_registry(&reg)?;
+
+        Ok((meta, copied))
+    }
+}
+
+/// Recursively copy `src_dir` → `dst_dir`, judging skip decisions against
+/// `rel_to_root` (the current directory's path relative to the profile
+/// root). Symlinks are recreated pointing at the same target (possibly
+/// stale or broken — runtime artifacts like SingletonSocket copy as-is);
+/// directory and file permissions are preserved. Sockets/fifos and other
+/// non-regular files are skipped. Returns the number of files copied.
+fn copy_tree(src_dir: &Path, dst_dir: &Path, rel_to_root: &Path, skip_caches: bool) -> Result<usize> {
+    fs::create_dir_all(dst_dir)?;
+    #[cfg(unix)]
+    {
+        let perms = fs::metadata(src_dir)?.permissions();
+        fs::set_permissions(dst_dir, perms)?;
+    }
+
+    let mut copied = 0usize;
+    for entry in fs::read_dir(src_dir)? {
+        let entry = entry?;
+        let child_rel = rel_to_root.join(entry.file_name());
+        if skip_caches && crate::cache::is_regenerable(&child_rel) {
+            continue;
+        }
+
+        let from = entry.path();
+        let to = dst_dir.join(entry.file_name());
+        let file_type = entry.file_type()?;
+
+        if file_type.is_symlink() {
+            let target = fs::read_link(&from)?;
+            std::os::unix::fs::symlink(&target, &to)?;
+        } else if file_type.is_dir() {
+            copied += copy_tree(&from, &to, &child_rel, skip_caches)?;
+        } else if file_type.is_file() {
+            // fs::copy preserves permission bits on Unix.
+            fs::copy(&from, &to)?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn setup() -> (tempfile::TempDir, StorageManager) {
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
+        (tmp, storage)
+    }
+
+    /// Build a realistic minimal profile tree: valuable state plus caches.
+    fn seed_profile(storage: &StorageManager, browser: Browser, name: &str, proxy: Option<ProxyConfig>) -> ProfileMetadata {
+        let meta = storage.create_profile(name, Some("source note"), browser).unwrap();
+        if let Some(p) = proxy {
+            storage.set_proxy(name, browser, Some(p)).unwrap();
+        }
+        let root = storage.profile_dir(browser, name);
+        fs::create_dir_all(root.join("Default")).unwrap();
+        fs::write(root.join("Default/Cookies"), "cookie-db").unwrap();
+        fs::write(root.join("Default/Preferences"), "{}").unwrap();
+        // Regenerable caches: root-level, nested, and nested two-level.
+        fs::create_dir_all(root.join("Cache")).unwrap();
+        fs::write(root.join("Cache/data_0"), "cache").unwrap();
+        fs::create_dir_all(root.join("Default/GPUCache")).unwrap();
+        fs::write(root.join("Default/GPUCache/data_0"), "gpu").unwrap();
+        fs::create_dir_all(root.join("Default/Service Worker/CacheStorage")).unwrap();
+        fs::write(root.join("Default/Service Worker/CacheStorage/https_x"), "pwa").unwrap();
+        fs::create_dir_all(root.join("component_crx_cache")).unwrap();
+        fs::write(root.join("component_crx_cache/x.crx"), "crx").unwrap();
+        fs::write(root.join("OptimizationHints"), "hints").unwrap();
+        // Symlink inside the tree must be recreated, not followed.
+        symlink("Cookies", root.join("Default/link-cookies")).unwrap();
+        meta
+    }
+
+    #[test]
+    fn clone_skips_caches_and_carries_metadata() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        let proxy = ProxyConfig::parse("socks5://10.0.0.1:1080", None).unwrap();
+        let src = seed_profile(&storage, browser, "src", Some(proxy.clone()));
+
+        let (meta, copied) = storage
+            .clone_profile_unchecked("src", "dst", browser, false, true)
+            .unwrap();
+
+        assert!(copied >= 2, "valuable files must be copied");
+        let dst_root = storage.profile_dir(browser, "dst");
+        assert_eq!(fs::read_to_string(dst_root.join("Default/Cookies")).unwrap(), "cookie-db");
+        assert!(dst_root.join("Default/Preferences").exists());
+        // Symlink recreated as a symlink to the same target.
+        let link = dst_root.join("Default/link-cookies");
+        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&link).unwrap(), Path::new("Cookies"));
+        // Regenerable state absent.
+        assert!(!dst_root.join("Cache").exists());
+        assert!(!dst_root.join("Default/GPUCache").exists());
+        assert!(!dst_root.join("Default/Service Worker/CacheStorage").exists());
+        assert!(!dst_root.join("component_crx_cache").exists());
+        assert!(!dst_root.join("OptimizationHints").exists());
+
+        // Metadata: description and proxy carried, timestamps refreshed.
+        assert_eq!(meta.description, "source note");
+        assert_eq!(meta.proxy, Some(proxy));
+        assert!(meta.created_at >= src.created_at);
+        let reg = storage.load_registry().unwrap();
+        assert!(reg.profiles.contains_key("chrome:dst"));
+    }
+
+    #[test]
+    fn clone_full_includes_caches() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        seed_profile(&storage, browser, "src", None);
+
+        storage
+            .clone_profile_unchecked("src", "dst", browser, true, true)
+            .unwrap();
+
+        let dst_root = storage.profile_dir(browser, "dst");
+        assert!(dst_root.join("Cache/data_0").exists());
+        assert!(dst_root.join("Default/GPUCache").exists());
+        assert!(dst_root.join("Default/Service Worker/CacheStorage/https_x").exists());
+        assert!(dst_root.join("OptimizationHints").exists());
+    }
+
+    #[test]
+    fn clone_no_proxy_strips_proxy() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        let proxy = ProxyConfig::parse("http://p:8080", None).unwrap();
+        seed_profile(&storage, browser, "src", Some(proxy));
+
+        let (meta, _) = storage
+            .clone_profile_unchecked("src", "dst", browser, false, false)
+            .unwrap();
+        assert_eq!(meta.proxy, None);
+    }
+
+    #[test]
+    fn clone_guards() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        storage.create_profile("src", None, browser).unwrap();
+        storage.create_profile("taken", None, browser).unwrap();
+
+        // Invalid names rejected on either side.
+        assert!(storage.clone_profile_unchecked("bad name", "dst", browser, false, true).is_err());
+        assert!(storage.clone_profile_unchecked("src", "", browser, false, true).is_err());
+        // Missing source.
+        assert!(storage.clone_profile_unchecked("nope", "dst", browser, false, true).is_err());
+        // Existing destination.
+        assert!(storage.clone_profile_unchecked("src", "taken", browser, false, true).is_err());
+        // Cloning onto itself is caught by the exists guard.
+        assert!(storage.clone_profile_unchecked("src", "src", browser, false, true).is_err());
+    }
 }

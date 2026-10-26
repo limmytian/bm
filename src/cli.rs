@@ -37,6 +37,23 @@ pub enum Commands {
         note: Option<String>,
     },
 
+    /// Duplicate a profile on this machine (sessions survive; no cross-machine sync)
+    Clone {
+        /// Source profile name
+        src: String,
+
+        /// Destination profile name
+        dst: String,
+
+        /// Copy regenerable caches too (skipped by default for a fast copy)
+        #[arg(long)]
+        full: bool,
+
+        /// Do not carry over the source profile's egress proxy
+        #[arg(long)]
+        no_proxy: bool,
+    },
+
     /// Switch the active browser profile via symlink
     Switch {
         /// Name of the profile to activate
