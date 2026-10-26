@@ -28,6 +28,10 @@ pub struct Registry {
 
 pub struct StorageManager {
     base_dir: PathBuf,
+    /// Test seam: overrides the browser's default user-data dir (the global
+    /// symlink location) so active-profile logic is testable without ever
+    /// touching the real browser directories.
+    default_dir_override: Option<PathBuf>,
 }
 
 impl StorageManager {
@@ -37,13 +41,35 @@ impl StorageManager {
             BmError::Other("Unable to resolve home directory".into())
         })?;
         let base_dir = home.join(".bm");
-        Ok(Self { base_dir })
+        Ok(Self {
+            base_dir,
+            default_dir_override: None,
+        })
     }
 
     /// Custom base directory constructor (useful for testing).
     #[allow(dead_code)]
     pub fn with_base_dir(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+        Self {
+            base_dir,
+            default_dir_override: None,
+        }
+    }
+
+    /// Route the default-data-dir resolution (global symlink location) at a
+    /// custom path; used by tests.
+    #[allow(dead_code)]
+    pub fn with_default_dir_override(mut self, dir: PathBuf) -> Self {
+        self.default_dir_override = Some(dir);
+        self
+    }
+
+    /// The browser's default user-data dir, honoring the test override.
+    fn default_data_dir(&self, browser: Browser) -> Result<PathBuf> {
+        match &self.default_dir_override {
+            Some(dir) => Ok(dir.clone()),
+            None => browser.default_data_dir(),
+        }
     }
 
     pub fn base_dir(&self) -> &Path {
@@ -153,7 +179,7 @@ impl StorageManager {
 
     /// Get the currently active profile name by inspecting the browser's default user data symlink.
     pub fn get_current_active(&self, browser: Browser) -> Result<Option<String>> {
-        let default_dir = browser.default_data_dir()?;
+        let default_dir = self.default_data_dir(browser)?;
         if !default_dir.exists() && fs::symlink_metadata(&default_dir).is_err() {
             return Ok(None);
         }
@@ -380,7 +406,7 @@ impl StorageManager {
             }
         }
 
-        let default_dir = browser.default_data_dir()?;
+        let default_dir = self.default_data_dir(browser)?;
         let mut backup_created = None;
 
         if fs::symlink_metadata(&default_dir).is_ok() {
@@ -522,6 +548,86 @@ impl StorageManager {
         self.save_registry(&reg)?;
 
         Ok((meta, copied))
+    }
+
+    /// Rename a profile: move its directory and re-key its registry entry,
+    /// preserving created_at. If the renamed profile is the active one and
+    /// the browser is running, refuses — the default-data-dir symlink repoint
+    /// must not race a live browser (same guard as switch_profile).
+    pub fn rename_profile(&self, old: &str, new: &str, browser: Browser) -> Result<ProfileMetadata> {
+        if self.get_current_active(browser)?.as_deref() == Some(old) && browser.is_running() {
+            return Err(BmError::BrowserRunning {
+                browser: browser.display_name().to_string(),
+            });
+        }
+        self.rename_profile_unchecked(old, new, browser)
+    }
+
+    /// Rename without the running-browser guard; separate so tests can run
+    /// against `is_running`'s process-table dependency.
+    pub(crate) fn rename_profile_unchecked(
+        &self,
+        old: &str,
+        new: &str,
+        browser: Browser,
+    ) -> Result<ProfileMetadata> {
+        Self::validate_name(new)?;
+
+        let src_dir = self.profile_dir(browser, old);
+        if !src_dir.exists() {
+            return Err(BmError::ProfileNotFound {
+                name: old.to_string(),
+                browser: browser.display_name().to_string(),
+            });
+        }
+        let dst_dir = self.profile_dir(browser, new);
+        if dst_dir.exists() {
+            return Err(BmError::ProfileAlreadyExists {
+                name: new.to_string(),
+                browser: browser.display_name().to_string(),
+            });
+        }
+
+        let was_active = self.get_current_active(browser)?.as_deref() == Some(old);
+
+        fs::rename(&src_dir, &dst_dir)?;
+
+        let mut reg = self.load_registry()?;
+        let mut meta = match reg.profiles.remove(&Self::registry_key(browser, old)) {
+            Some(m) => m,
+            None => ProfileMetadata {
+                name: old.to_string(),
+                browser,
+                description: String::new(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                proxy: None,
+            },
+        };
+        meta.name = new.to_string();
+        meta.updated_at = Utc::now();
+        reg.profiles
+            .insert(Self::registry_key(browser, new), meta.clone());
+        self.save_registry(&reg)?;
+
+        // Keep the global symlink pointing at the renamed dir.
+        if was_active {
+            let default_dir = self.default_data_dir(browser)?;
+            let is_symlink = fs::symlink_metadata(&default_dir)
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
+            if is_symlink {
+                fs::remove_file(&default_dir)?;
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&dst_dir, &default_dir)?;
+                #[cfg(not(unix))]
+                return Err(BmError::UnsupportedPlatform(
+                    "Symlink creation requires Unix-based operating system".into(),
+                ));
+            }
+        }
+
+        Ok(meta)
     }
 }
 
@@ -681,5 +787,75 @@ mod tests {
         assert!(storage.clone_profile_unchecked("src", "taken", browser, false, true).is_err());
         // Cloning onto itself is caught by the exists guard.
         assert!(storage.clone_profile_unchecked("src", "src", browser, false, true).is_err());
+    }
+
+    #[test]
+    fn rename_inactive_profile_moves_dir_and_registry() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        let proxy = ProxyConfig::parse("socks5://10.0.0.1:1080", None).unwrap();
+        let src = storage.create_profile("old", Some("keep me"), browser).unwrap();
+        storage.set_proxy("old", browser, Some(proxy)).unwrap();
+        fs::create_dir_all(storage.profile_dir(browser, "old/Default")).unwrap();
+        fs::write(storage.profile_dir(browser, "old/Default/Cookies"), "db").unwrap();
+
+        let meta = storage
+            .rename_profile_unchecked("old", "new", browser)
+            .unwrap();
+
+        assert!(!storage.profile_dir(browser, "old").exists());
+        assert!(storage.profile_dir(browser, "new/Default/Cookies").exists());
+        assert_eq!(meta.name, "new");
+        assert_eq!(meta.description, "keep me");
+        assert_eq!(meta.proxy.as_ref().unwrap().server_string(), "socks5://10.0.0.1:1080");
+        // created_at preserved, updated_at refreshed.
+        assert_eq!(meta.created_at, src.created_at);
+        assert!(meta.updated_at >= meta.created_at);
+        let reg = storage.load_registry().unwrap();
+        assert!(!reg.profiles.contains_key("chrome:old"));
+        assert!(reg.profiles.contains_key("chrome:new"));
+    }
+
+    #[test]
+    fn rename_active_profile_repoints_default_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default_link = tmp.path().join("default-link");
+        let storage = StorageManager::with_base_dir(tmp.path().join(".bm"))
+            .with_default_dir_override(default_link.clone());
+        let browser = Browser::Chrome;
+
+        storage.create_profile("a", None, browser).unwrap();
+        fs::create_dir_all(storage.profile_dir(browser, "a")).unwrap();
+        fs::write(storage.profile_dir(browser, "a/marker"), "x").unwrap();
+        symlink(
+            storage.profile_dir(browser, "a"),
+            &default_link,
+        )
+        .unwrap();
+
+        storage.rename_profile_unchecked("a", "b", browser).unwrap();
+
+        // The global symlink now resolves to the renamed dir.
+        assert!(default_link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&default_link).unwrap(), storage.profile_dir(browser, "b"));
+        assert_eq!(storage.get_current_active(browser).unwrap().as_deref(), Some("b"));
+        assert_eq!(fs::read_to_string(default_link.join("marker")).unwrap(), "x");
+    }
+
+    #[test]
+    fn rename_guards() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        storage.create_profile("old", None, browser).unwrap();
+        storage.create_profile("taken", None, browser).unwrap();
+
+        // Invalid new name.
+        assert!(storage.rename_profile_unchecked("old", "bad name", browser).is_err());
+        // Missing source.
+        assert!(storage.rename_profile_unchecked("nope", "new", browser).is_err());
+        // Existing destination.
+        assert!(storage.rename_profile_unchecked("old", "taken", browser).is_err());
+        // Renaming onto itself is caught by the exists guard.
+        assert!(storage.rename_profile_unchecked("old", "old", browser).is_err());
     }
 }

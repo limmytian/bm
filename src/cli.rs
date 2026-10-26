@@ -73,6 +73,19 @@ pub enum Commands {
         note: String,
     },
 
+    /// Rename a profile, keeping its data and metadata
+    Rename {
+        /// Current profile name
+        old: String,
+
+        /// New profile name
+        new: String,
+
+        /// Regenerate standalone shortcuts that reference the old name
+        #[arg(long)]
+        regen_shortcuts: bool,
+    },
+
     /// Delete a profile and its isolated data
     Delete {
         /// Name of the profile to delete

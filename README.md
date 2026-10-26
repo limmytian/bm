@@ -107,6 +107,14 @@ bm switch personal --force
 bm describe work "Updated corporate note"
 ```
 
+### Rename a Profile
+Move a profile's directory and metadata to a new name — sessions, cookies, proxy config, and creation time are preserved. If the renamed profile is the globally active one, the default-data-dir symlink is repointed (refuses while the browser is running):
+```bash
+bm rename work work-2026
+bm rename work work-2026 --regen-shortcuts   # also regenerate stale standalone shortcuts
+```
+Standalone shortcuts referencing the old name are detected and reported; regenerate them with `bm shortcut <new>` or the flag above.
+
 ### Generate Standalone Desktop Shortcut
 Create a standalone application launcher (e.g., `Chrome (work).app` on macOS) that can be pinned to your Dock:
 ```bash

@@ -226,6 +226,44 @@ fn run(cli: Cli) -> Result<()> {
             );
         }
 
+        Commands::Rename { old, new, regen_shortcuts } => {
+            let meta = storage.rename_profile(&old, &new, browser)?;
+            println!(
+                "{} Renamed profile '{}' → '{}' (data and metadata moved).",
+                "Success:".green().bold(),
+                old.bold(),
+                meta.name.bold()
+            );
+
+            let stale = ShortcutGenerator::find_stale_shortcuts(&storage, browser, &old);
+            if stale.is_empty() {
+                return Ok(());
+            }
+            if regen_shortcuts {
+                let regenerated =
+                    ShortcutGenerator::regenerate_stale_shortcuts(&storage, browser, &stale, &new)?;
+                println!(
+                    "{} {} standalone shortcut(s) regenerated.",
+                    "Success:".green().bold(),
+                    regenerated.len()
+                );
+            } else {
+                println!(
+                    "{} {} standalone shortcut(s) still reference the old name:",
+                    "Warning:".yellow().bold(),
+                    stale.len()
+                );
+                for path in &stale {
+                    println!("  {}", path.display());
+                }
+                println!(
+                    "Regenerate them with {} or re-run this command with {}.",
+                    format!("bm shortcut {}", new).green(),
+                    "--regen-shortcuts".green()
+                );
+            }
+        }
+
         Commands::Delete { name, yes } => {
             if !yes {
                 print!(

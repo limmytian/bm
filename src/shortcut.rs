@@ -269,6 +269,112 @@ Categories=Network;WebBrowser;\n",
 
         Ok(script_file)
     }
+
+    /// Find managed launcher artifacts that still reference the profile dir
+    /// of `old_name` — they break once the profile is renamed. Checks the bm
+    /// shortcuts dir and, on macOS, the default .app destinations
+    /// (~/Applications, ~/Desktop).
+    pub fn find_stale_shortcuts(
+        storage: &StorageManager,
+        browser: Browser,
+        old_name: &str,
+    ) -> Vec<PathBuf> {
+        let old_dir = storage.profile_dir(browser, old_name);
+        let old_dir_str = old_dir.to_string_lossy().to_string();
+        let mut stale = Vec::new();
+
+        let scripts_dir = storage.base_dir().join("shortcuts");
+        if let Ok(entries) = fs::read_dir(&scripts_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("sh") {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if content.contains(&old_dir_str) {
+                            stale.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(home) = dirs::home_dir() {
+                for dir in [home.join("Applications"), home.join("Desktop")] {
+                    stale.extend(find_stale_app_bundles(browser, &old_dir, &dir));
+                }
+            }
+        }
+
+        stale
+    }
+
+    /// Regenerate stale launcher artifacts for the renamed profile at their
+    /// original locations and remove the outdated ones (including the Linux
+    /// XDG .desktop entry of the old name, best-effort).
+    pub fn regenerate_stale_shortcuts(
+        storage: &StorageManager,
+        browser: Browser,
+        stale: &[PathBuf],
+        new_name: &str,
+    ) -> Result<Vec<PathBuf>> {
+        let mut regenerated = Vec::new();
+        for old_path in stale {
+            let dest = old_path.parent().map(|p| p.to_path_buf());
+            let new_path = Self::create_shortcut(storage, browser, new_name, dest.as_deref())?;
+
+            if old_path.is_dir() {
+                fs::remove_dir_all(old_path)?;
+            } else {
+                let _ = fs::remove_file(old_path);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(file_name) = old_path.file_name().and_then(|n| n.to_str()) {
+                // "{browser}-{name}.sh" → "bm-{browser}-{name}.desktop"
+                let stem = file_name.strip_suffix(".sh").unwrap_or(file_name);
+                if let Some(home) = dirs::home_dir() {
+                    let desktop = home
+                        .join(".local/share/applications")
+                        .join(format!("bm-{stem}.desktop"));
+                    let _ = fs::remove_file(desktop);
+                }
+            }
+            regenerated.push(new_path);
+        }
+        Ok(regenerated)
+    }
+}
+
+/// Scan `dir` for bm-generated .app bundles whose launcher embeds `old_dir`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn find_stale_app_bundles(browser: Browser, old_dir: &Path, dir: &Path) -> Vec<PathBuf> {
+    let prefix = match browser {
+        Browser::Chrome => "Chrome",
+        Browser::Edge => "Edge",
+    };
+    let old_dir_str = old_dir.to_string_lossy().to_string();
+    let mut found = Vec::new();
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_app = path.extension().and_then(|e| e.to_str()) == Some("app");
+            let name_ok = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with(prefix))
+                .unwrap_or(false);
+            if !(is_app && name_ok) {
+                continue;
+            }
+            let launcher = path.join("Contents/MacOS/launcher");
+            if let Ok(content) = fs::read_to_string(&launcher) {
+                if content.contains(&old_dir_str) {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found
 }
 
 #[cfg(test)]
@@ -322,5 +428,80 @@ mod tests {
         );
         // Quoting is a shell concern; argv entries must not carry it.
         assert!(argv.iter().all(|a| !a.contains('"')));
+    }
+
+    #[test]
+    fn stale_shortcut_detection_and_regeneration() {
+        use std::fs;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
+        let browser = Browser::Chrome;
+        storage.create_profile("old", None, browser).unwrap();
+        let old_dir = storage.profile_dir(browser, "old");
+
+        // Fabricate a standalone script referencing the old profile dir, and
+        // an unrelated one that must not match.
+        let shortcuts_dir = storage.base_dir().join("shortcuts");
+        fs::create_dir_all(&shortcuts_dir).unwrap();
+        let script = shortcuts_dir.join("chrome-old.sh");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nexec \"chrome\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n",
+                old_dir.display()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            shortcuts_dir.join("chrome-other.sh"),
+            "#!/bin/sh\nexec x --user-data-dir=\"/elsewhere\"\n",
+        )
+        .unwrap();
+
+        let stale = ShortcutGenerator::find_stale_shortcuts(&storage, browser, "old");
+        assert_eq!(stale, vec![script.clone()]);
+
+        // Fabricated .app bundle detection (explicit scan dir, no real home).
+        let apps = tmp.path().join("Apps");
+        let bundle = apps.join("Chrome (old).app");
+        fs::create_dir_all(bundle.join("Contents/MacOS")).unwrap();
+        fs::write(
+            bundle.join("Contents/MacOS/launcher"),
+            format!("exec \"{}\"", old_dir.display()),
+        )
+        .unwrap();
+        let stale_apps = find_stale_app_bundles(browser, &old_dir, &apps);
+        assert_eq!(stale_apps, vec![bundle.clone()]);
+        // A non-bm bundle (wrong prefix) is ignored.
+        let foreign = apps.join("Other.app");
+        fs::create_dir_all(foreign.join("Contents/MacOS")).unwrap();
+        fs::write(
+            foreign.join("Contents/MacOS/launcher"),
+            format!("exec \"{}\"", old_dir.display()),
+        )
+        .unwrap();
+        assert_eq!(find_stale_app_bundles(browser, &old_dir, &apps).len(), 1);
+
+        // Rename, then regenerate in place: new artifact written next to the
+        // old one, outdated artifact removed.
+        storage
+            .rename_profile_unchecked("old", "new", browser)
+            .unwrap();
+        let regen =
+            ShortcutGenerator::regenerate_stale_shortcuts(&storage, browser, &stale, "new")
+                .unwrap();
+        assert_eq!(regen.len(), 1);
+        assert!(!script.exists());
+        assert!(regen[0].exists());
+        // The regenerated artifact is a shell script (Linux) or an .app
+        // bundle whose launcher holds the flags (macOS).
+        let artifact = &regen[0];
+        let content = if artifact.is_dir() {
+            fs::read_to_string(artifact.join("Contents/MacOS/launcher")).unwrap()
+        } else {
+            fs::read_to_string(artifact).unwrap()
+        };
+        assert!(content.contains(&storage.profile_dir(browser, "new").to_string_lossy().to_string()));
     }
 }
