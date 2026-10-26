@@ -15,8 +15,9 @@ use std::io::{self, Write};
 use clap::Parser;
 use colored::Colorize;
 
+use crate::browser::Browser;
 use crate::cli::{Cli, Commands, ProxyAction};
-use crate::error::Result;
+use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
 use crate::shortcut::ShortcutGenerator;
@@ -32,11 +33,28 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    use std::io::IsTerminal;
+
     let browser = cli.browser;
     let storage = StorageManager::new()?;
+    // Interactive affordances (profile picker) only when both ends of the
+    // terminal are attached; piped/CI runs keep scripted behavior.
+    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
 
     match cli.command {
-        Commands::List => {
+        None => {
+            if interactive {
+                if let Some(name) = pick_profile(&storage, browser)? {
+                    switch_to(&storage, browser, &name, false)?;
+                }
+            } else {
+                use clap::CommandFactory;
+                Cli::command().print_help()?;
+            }
+        }
+
+        Some(command) => match command {
+            Commands::List => {
             let profiles = storage.list_profiles(browser)?;
             let active_opt = storage.get_current_active(browser)?;
 
@@ -186,46 +204,20 @@ fn run(cli: Cli) -> Result<()> {
         }
 
         Commands::Switch { name, force } => {
-            let name = resolve_switch_name(&name, storage.previous_profile(browser))?;
-            println!(
-                "Switching {} profile to '{}'...",
-                browser.display_name().cyan(),
-                name.bold()
-            );
-
-            let backup = storage.switch_profile(&name, browser, force)?;
-
-            if let Some(backup_name) = backup {
-                println!(
-                    "{} Your pre-existing browser data has been safely preserved as profile '{}'.",
-                    "Note:".blue().bold(),
-                    backup_name.yellow().bold()
-                );
-            }
-
-            println!(
-                "{} Successfully switched active profile to '{}'!",
-                "Success:".green().bold(),
-                name.green().bold()
-            );
-            println!("All default browser launches (Dock, links, Spotlight) will now use this profile.");
-
-            // Global-launch proxy follows the active profile (managed policy
-            // on macOS, .desktop override on Linux).
-            policy::sync_for_active_profile(&storage, browser)?;
-            if let Some((meta, _)) = storage
-                .list_profiles(browser)?
-                .into_iter()
-                .find(|(m, _)| m.name == name)
-            {
-                if let Some(p) = &meta.proxy {
-                    println!(
-                        "{} Egress proxy active for global launches — effective on the next browser start.",
-                        "Note:".blue().bold()
-                    );
-                    warn_side_by_side_override(&storage, browser, p);
+            let name = match name {
+                Some(raw) => resolve_switch_name(&raw, storage.previous_profile(browser))?,
+                None if interactive => match pick_profile(&storage, browser)? {
+                    Some(picked) => picked,
+                    None => return Ok(()), // cancelled
+                },
+                None => {
+                    return Err(crate::error::BmError::Other(
+                        "Profile name required — e.g. `bm switch work` (the interactive picker needs a TTY)."
+                            .into(),
+                    ))
                 }
-            }
+            };
+            switch_to(&storage, browser, &name, force)?;
         }
 
         Commands::Describe { name, note } => {
@@ -676,6 +668,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
         },
+            }
     }
 
     Ok(())
@@ -694,6 +687,101 @@ fn resolve_switch_name(raw: &str, previous: Option<String>) -> Result<String> {
         })
     } else {
         Ok(raw.to_string())
+    }
+}
+
+/// The shared switch flow: swap the symlink, sync the global-launch proxy
+/// (managed policy on macOS, .desktop override on Linux), and print the
+/// followup notes. Used by `bm switch <name>` and the interactive picker.
+fn switch_to(storage: &StorageManager, browser: Browser, name: &str, force: bool) -> Result<()> {
+    println!(
+        "Switching {} profile to '{}'...",
+        browser.display_name().cyan(),
+        name.bold()
+    );
+
+    let backup = storage.switch_profile(name, browser, force)?;
+
+    if let Some(backup_name) = backup {
+        println!(
+            "{} Your pre-existing browser data has been safely preserved as profile '{}'.",
+            "Note:".blue().bold(),
+            backup_name.yellow().bold()
+        );
+    }
+
+    println!(
+        "{} Successfully switched active profile to '{}'!",
+        "Success:".green().bold(),
+        name.green().bold()
+    );
+    println!("All default browser launches (Dock, links, Spotlight) will now use this profile.");
+
+    policy::sync_for_active_profile(storage, browser)?;
+    if let Some((meta, _)) = storage
+        .list_profiles(browser)?
+        .into_iter()
+        .find(|(m, _)| m.name == name)
+    {
+        if let Some(p) = &meta.proxy {
+            println!(
+                "{} Egress proxy active for global launches — effective on the next browser start.",
+                "Note:".blue().bold()
+            );
+            warn_side_by_side_override(storage, browser, p);
+        }
+    }
+    Ok(())
+}
+
+/// Interactive profile picker (TTY only): the active profile is preselected
+/// and descriptions render as hint lines. Returns `None` when the user
+/// cancels with Esc/Ctrl-C — no state changes.
+fn pick_profile(storage: &StorageManager, browser: Browser) -> Result<Option<String>> {
+    let profiles = storage.list_profiles(browser)?;
+    if profiles.is_empty() {
+        println!(
+            "No profiles found for {}. Create one with 'bm create <name>'.",
+            browser.display_name()
+        );
+        return Ok(None);
+    }
+
+    let active = storage.get_current_active(browser)?.unwrap_or_default();
+    let options: Vec<(String, String)> = profiles
+        .iter()
+        .map(|(m, _)| {
+            let display = if m.description.is_empty() {
+                m.name.clone()
+            } else {
+                format!("{} — {}", m.name, m.description)
+            };
+            (m.name.clone(), display)
+        })
+        .collect();
+    let starting_cursor = profiles
+        .iter()
+        .position(|(m, _)| m.name == active)
+        .unwrap_or(0);
+
+    let selection = inquire::Select::new(
+        "Switch to which profile?",
+        options.iter().map(|(_, d)| d.clone()).collect::<Vec<_>>(),
+    )
+    .with_starting_cursor(starting_cursor)
+    .with_help_message("Enter to switch · Esc to cancel")
+    .prompt();
+
+    match selection {
+        Ok(choice) => Ok(options
+            .into_iter()
+            .find(|(_, display)| *display == choice)
+            .map(|(name, _)| name)),
+        Err(
+            inquire::InquireError::OperationCanceled
+            | inquire::InquireError::OperationInterrupted,
+        ) => Ok(None),
+        Err(e) => Err(BmError::Other(format!("profile picker failed: {e}"))),
     }
 }
 

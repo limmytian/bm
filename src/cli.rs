@@ -12,7 +12,7 @@ use crate::browser::Browser;
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
     /// Target browser (chrome or edge) [default: chrome]
     #[arg(short, long, global = true, value_enum, default_value_t = Browser::Chrome)]
@@ -56,8 +56,8 @@ pub enum Commands {
 
     /// Switch the active browser profile via symlink
     Switch {
-        /// Name of the profile to activate
-        name: String,
+        /// Name of the profile to activate (omit in a TTY for the interactive picker)
+        name: Option<String>,
 
         /// Force switch by terminating running browser instances if necessary
         #[arg(short, long)]

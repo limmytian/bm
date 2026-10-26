@@ -107,6 +107,9 @@ bm switch personal --force
 ```
 `bm list` shows a `SWITCHED` column with how long ago the active profile was activated.
 
+### Interactive Profile Picker
+Run bare `bm` — or `bm switch` without arguments — in a terminal to pick a profile interactively: the active one is preselected, descriptions show as hint lines, Enter switches, Esc/Ctrl-C cancels without changes. In scripts and CI (non-TTY), bare `bm` prints help and `bm switch` requires a name.
+
 ### Update Notes / Description
 ```bash
 bm describe work "Updated corporate note"
