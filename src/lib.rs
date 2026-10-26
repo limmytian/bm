@@ -1,6 +1,7 @@
 pub mod browser;
 pub mod cli;
 pub mod error;
+pub mod open;
 pub mod policy;
 pub mod proxy;
 pub mod shortcut;

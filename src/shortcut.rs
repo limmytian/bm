@@ -40,6 +40,31 @@ pub(crate) fn proxy_launch_flags(proxy: Option<&ProxyConfig>) -> String {
     flags
 }
 
+/// Argv form of `proxy_launch_flags` for direct `Command` spawning: splits on
+/// unquoted spaces and strips the double quotes that exist only for shell
+/// interpolation. Quoted values may contain spaces (the SOCKS5 DNS pin does)
+/// and must stay a single argv entry.
+pub(crate) fn proxy_launch_argv(proxy: Option<&ProxyConfig>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quotes = false;
+    for c in proxy_launch_flags(proxy).chars() {
+        match c {
+            '"' => in_quotes = !in_quotes,
+            ' ' if !in_quotes => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 /// Pre-launch guard embedded in macOS launchers: a managed policy
 /// (written by bm for the globally active profile) overrides
 /// `--proxy-server` flags, so warn when this launcher's own proxy differs
@@ -80,15 +105,7 @@ impl ShortcutGenerator {
 
         // Proxy config lives in profile metadata; profiles that exist only as
         // folders (no metadata) simply launch without a proxy.
-        let proxy = storage
-            .list_profiles(browser)
-            .ok()
-            .and_then(|profiles| {
-                profiles
-                    .into_iter()
-                    .find(|(m, _)| m.name == profile_name)
-                    .and_then(|(m, _)| m.proxy)
-            });
+        let proxy = storage.proxy_for(browser, profile_name);
 
         if cfg!(target_os = "macos") {
             Self::create_macos_app_bundle(browser, profile_name, &profile_dir, proxy.as_ref(), dest_dir)
@@ -289,5 +306,21 @@ mod tests {
         let p = ProxyConfig::parse("socks5://[::1]:1080", None).unwrap();
         let flags = proxy_launch_flags(Some(&p));
         assert!(flags.contains("EXCLUDE [::1]"));
+    }
+
+    #[test]
+    fn argv_form_splits_flags_and_preserves_quoted_spaces() {
+        assert!(proxy_launch_argv(None).is_empty());
+
+        let p = ProxyConfig::parse("socks5://[::1]:1080", None).unwrap();
+        let argv = proxy_launch_argv(Some(&p));
+        assert!(argv.contains(&"--proxy-server=socks5://[::1]:1080".to_string()));
+        // The DNS-pin value contains spaces and must stay a single argv entry.
+        assert_eq!(
+            argv.last().unwrap(),
+            "--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE [::1]"
+        );
+        // Quoting is a shell concern; argv entries must not carry it.
+        assert!(argv.iter().all(|a| !a.contains('"')));
     }
 }

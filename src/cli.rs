@@ -76,6 +76,15 @@ pub enum Commands {
         dest: Option<PathBuf>,
     },
 
+    /// Launch a profile ad-hoc without switching the global default profile
+    Open {
+        /// Name of the profile to launch
+        name: String,
+
+        /// Optional URLs to open in the launched browser
+        urls: Vec<String>,
+    },
+
     /// Manage the per-profile egress proxy
     Proxy {
         #[command(subcommand)]

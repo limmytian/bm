@@ -1,6 +1,7 @@
 mod browser;
 mod cli;
 mod error;
+mod open;
 mod policy;
 mod proxy;
 mod shortcut;
@@ -12,6 +13,7 @@ use colored::Colorize;
 
 use crate::cli::{Cli, Commands, ProxyAction};
 use crate::error::Result;
+use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
 use crate::shortcut::ShortcutGenerator;
 use crate::storage::StorageManager;
@@ -231,6 +233,16 @@ fn run(cli: Cli) -> Result<()> {
             );
             println!("  {}", shortcut_path.display().to_string().cyan().bold());
             println!("You can run this launcher directly to open profile '{}' independently.", name.bold());
+        }
+
+        Commands::Open { name, urls } => {
+            OpenLauncher::launch(&storage, browser, &name, &urls)?;
+            println!(
+                "{} Launched {} profile '{}' — global default profile unchanged.",
+                "Success:".green().bold(),
+                browser.display_name().cyan(),
+                name.bold()
+            );
         }
 
         Commands::Proxy { action } => match action {

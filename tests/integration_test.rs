@@ -120,3 +120,28 @@ fn test_proxy_persistence_and_backward_compatibility() {
     let orphan = storage2.set_proxy("orphandir", browser, Some(cfg)).unwrap();
     assert_eq!(orphan.proxy.as_ref().unwrap().server_string(), "socks5://10.0.0.1:1080");
 }
+
+#[test]
+fn test_proxy_lookup_helper() {
+    use bm::proxy::ProxyConfig;
+
+    let tmp = tempdir().unwrap();
+    let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
+    let browser = Browser::Chrome;
+
+    // Unknown profile: no proxy.
+    assert_eq!(storage.proxy_for(browser, "work"), None);
+
+    // A metadata-less folder also resolves to no proxy (launcher fallback).
+    std::fs::create_dir_all(storage.profile_dir(browser, "orphandir")).unwrap();
+    assert_eq!(storage.proxy_for(browser, "orphandir"), None);
+
+    let cfg = ProxyConfig::parse("socks5://10.0.0.1:1080", None).unwrap();
+    storage.create_profile("work", None, browser).unwrap();
+    storage.set_proxy("work", browser, Some(cfg.clone())).unwrap();
+    assert_eq!(storage.proxy_for(browser, "work"), Some(cfg));
+
+    // Clearing the proxy is reflected in the lookup.
+    storage.set_proxy("work", browser, None).unwrap();
+    assert_eq!(storage.proxy_for(browser, "work"), None);
+}

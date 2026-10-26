@@ -104,6 +104,15 @@ bm shortcut work
 bm shortcut staging --browser edge
 ```
 
+### Launch a Profile Ad-Hoc (No Switching)
+Launch the browser directly against a profile with its proxy flags, without touching the globally active profile and without generating any launcher artifact — the quick, no-ceremony counterpart to `bm shortcut`:
+```bash
+bm open work
+bm open personal --browser edge https://github.com https://news.ycombinator.com
+```
+* The CLI returns immediately; the profile's egress proxy is applied automatically.
+* Running browser instances are fine: a distinct profile directory runs side by side. Re-running `bm open <name> <url>` hands the URLs to that profile's running instance.
+
 ### Manage Per-Profile Proxy
 Each profile can route traffic through its own egress proxy (SOCKS5, HTTP, or HTTPS):
 ```bash
