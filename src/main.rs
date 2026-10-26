@@ -5,6 +5,7 @@ mod error;
 mod open;
 mod policy;
 mod proxy;
+mod proxy_test;
 mod shortcut;
 mod size;
 mod storage;
@@ -516,6 +517,63 @@ fn run(cli: Cli) -> Result<()> {
                     policy::sync_for_active_profile(&storage, browser)?;
                 }
                 print_proxy_followup(&meta.name, is_active);
+            }
+
+            ProxyAction::Test { name, url, timeout } => {
+                use crate::proxy_test::{UreqFetcher, check_egress, resolve_targets};
+                use std::time::Duration;
+
+                let targets = resolve_targets(&storage, browser, name.as_deref())?;
+                let fetcher = UreqFetcher;
+                let timeout = Duration::from_secs(timeout);
+
+                for (profile, proxy) in targets {
+                    let Some(proxy) = proxy else {
+                        println!(
+                            "{} '{}' has no proxy configured — its egress is direct, nothing to verify.",
+                            "Note:".blue().bold(),
+                            profile.bold()
+                        );
+                        continue;
+                    };
+
+                    println!("{} — {}", profile.bold(), proxy.to_string().cyan());
+                    let check = check_egress(&fetcher, &url, &proxy, timeout);
+
+                    match &check.exit_ip {
+                        Some(ip) => println!(
+                            "  Exit IP (via proxy):  {} ({} ms)",
+                            ip.green().bold(),
+                            check.latency_ms
+                        ),
+                        None => println!("  Exit IP (via proxy):  {}", "unreachable".red()),
+                    }
+                    match &check.direct_ip {
+                        Some(ip) => println!("  Direct IP (no proxy): {}", ip),
+                        None => println!("  Direct IP (no proxy): {}", "unavailable".dimmed()),
+                    }
+
+                    match check.effective {
+                        Some(true) => println!(
+                            "{} Egress goes through the proxy.",
+                            "OK:".green().bold()
+                        ),
+                        Some(false) => println!(
+                            "{} Exit IP equals the direct IP — traffic is NOT going through the proxy.",
+                            "WARN:".yellow().bold()
+                        ),
+                        None if !check.through_ok => {
+                            println!("{} {}", "FAIL:".red().bold(), "could not reach the echo endpoint through the proxy.".red());
+                            if let Some(err) = &check.through_error {
+                                println!("  {}", err.yellow());
+                            }
+                        }
+                        None => println!(
+                            "{} Direct comparison unavailable; proxied path works.",
+                            "Note:".blue().bold()
+                        ),
+                    }
+                }
             }
         },
     }

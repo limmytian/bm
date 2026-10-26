@@ -153,6 +153,16 @@ bm proxy clear work
 * For the **globally active** profile, `bm` applies the proxy through Chrome/Edge managed policy on macOS (Dock, Spotlight, and link-click launches honor it too); `bm switch` and `bm proxy set/clear` keep it in sync. On Linux a user-level `.desktop` override carries the flags for desktop launches.
 * SOCKS5 proxies additionally pin DNS resolution to the proxy, and non-proxied UDP (WebRTC) is disabled to prevent real-IP leaks.
 
+#### Verify Egress (`bm proxy test`)
+Confirm a profile's traffic really exits through its proxy — `bm` fetches an IP-echo endpoint through the proxy and once directly, then compares the observed IPs:
+```bash
+bm proxy test              # every profile with a proxy configured
+bm proxy test work         # one profile
+bm proxy test work --url https://ifconfig.me --timeout 10
+```
+* `WARN` means the exit IP equals the direct IP — the proxy is being bypassed.
+* Failures print the likely cause: connection refused → the proxy is down; timeout → egress blocked.
+
 > **Positioning:** this is per-profile egress management, not browser fingerprint spoofing. Timezone, language, and device fingerprints remain native. For anti-association multi-account operation on strict platforms, use a dedicated anti-detect browser instead.
 
 ### Delete a Profile

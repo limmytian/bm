@@ -160,4 +160,18 @@ pub enum ProxyAction {
         /// Name of the profile
         name: String,
     },
+
+    /// Verify a profile's egress actually goes through its proxy
+    Test {
+        /// Profile to verify; omit to test every profile with a proxy
+        name: Option<String>,
+
+        /// IP-echo endpoint fetched through the proxy
+        #[arg(long, default_value = "https://api.ipify.org")]
+        url: String,
+
+        /// Per-request timeout in seconds
+        #[arg(long, default_value_t = 5)]
+        timeout: u64,
+    },
 }
