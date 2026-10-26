@@ -6,6 +6,7 @@ mod open;
 mod policy;
 mod proxy;
 mod shortcut;
+mod size;
 mod storage;
 
 use std::io::{self, Write};
@@ -17,6 +18,7 @@ use crate::error::Result;
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
 use crate::shortcut::ShortcutGenerator;
+use crate::size::{format_bytes, measure, purge_caches, scan_regenerable};
 use crate::storage::StorageManager;
 
 fn main() {
@@ -268,6 +270,167 @@ fn run(cli: Cli) -> Result<()> {
                 browser.display_name().cyan(),
                 name.bold()
             );
+        }
+
+        Commands::Size { name, json } => {
+            let names: Vec<String> = match &name {
+                Some(name) => {
+                    if !storage.profile_dir(browser, name).exists() {
+                        return Err(crate::error::BmError::ProfileNotFound {
+                            name: name.clone(),
+                            browser: browser.display_name().to_string(),
+                        });
+                    }
+                    vec![name.clone()]
+                }
+                None => storage
+                    .list_profiles(browser)?
+                    .into_iter()
+                    .map(|(m, _)| m.name)
+                    .collect(),
+            };
+
+            if json {
+                let entries: Vec<serde_json::Value> = names
+                    .iter()
+                    .map(|n| {
+                        let s = measure(&storage.profile_dir(browser, n))?;
+                        Ok(serde_json::json!({
+                            "name": n,
+                            "total_bytes": s.total_bytes,
+                            "cache_bytes": s.cache_bytes,
+                            "core_bytes": s.core_bytes,
+                        }))
+                    })
+                    .collect::<Result<_>>()?;
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+                return Ok(());
+            }
+
+            let mut rows: Vec<(String, crate::size::ProfileSize)> = names
+                .iter()
+                .map(|n| Ok((n.clone(), measure(&storage.profile_dir(browser, n))?)))
+                .collect::<Result<_>>()?;
+            rows.sort_by_key(|(_, s)| std::cmp::Reverse(s.total_bytes));
+
+            if let Some(single) = &name {
+                let (_, s) = &rows[0];
+                println!(
+                    "Profile '{}' for {}: {} total",
+                    single.bold(),
+                    browser.display_name().cyan(),
+                    format_bytes(s.total_bytes).bold()
+                );
+                println!("  Core data (sessions, logins, history): {}", format_bytes(s.core_bytes));
+                println!(
+                    "  Regenerable cache: {} — reclaim with {}",
+                    format_bytes(s.cache_bytes).yellow(),
+                    format!("bm clean {}", single).green()
+                );
+            } else {
+                println!(
+                    "{} for {} (cache = regenerable, core = valuable):",
+                    "Disk Usage".bold(),
+                    browser.display_name().cyan().bold()
+                );
+                if rows.is_empty() {
+                    println!("  {} No profiles found.", "-".dimmed());
+                    return Ok(());
+                }
+                println!(
+                    "  {:<18} {:>10} {:>10} {:>10}",
+                    "NAME".bold(),
+                    "TOTAL".bold(),
+                    "CACHE".bold(),
+                    "CORE".bold()
+                );
+                println!("  {}", "-".repeat(52).dimmed());
+                for (name, s) in rows {
+                    println!(
+                        "  {:<18} {:>10} {:>10} {:>10}",
+                        name,
+                        format_bytes(s.total_bytes),
+                        format_bytes(s.cache_bytes),
+                        format_bytes(s.core_bytes)
+                    );
+                }
+            }
+        }
+
+        Commands::Clean { name, all, dry_run } => {
+            if browser.is_running() {
+                return Err(crate::error::BmError::BrowserRunning {
+                    browser: browser.display_name().to_string(),
+                });
+            }
+            if !all && name.is_none() {
+                return Err(crate::error::BmError::Other(
+                    "Specify a profile to clean, or use --all for every profile of this browser.".into(),
+                ));
+            }
+
+            let targets: Vec<String> = if all {
+                storage
+                    .list_profiles(browser)?
+                    .into_iter()
+                    .map(|(m, _)| m.name)
+                    .collect()
+            } else {
+                let n = name.as_ref().unwrap();
+                if !storage.profile_dir(browser, n).exists() {
+                    return Err(crate::error::BmError::ProfileNotFound {
+                        name: n.clone(),
+                        browser: browser.display_name().to_string(),
+                    });
+                }
+                vec![n.clone()]
+            };
+            if targets.is_empty() {
+                println!("No profiles found for {}.", browser.display_name().cyan());
+                return Ok(());
+            }
+
+            let mut total = 0u64;
+            for profile in targets {
+                let dir = storage.profile_dir(browser, &profile);
+                if dry_run {
+                    let found = scan_regenerable(&dir)?;
+                    let bytes: u64 = found.iter().map(|(_, b)| b).sum();
+                    println!(
+                        "{} '{}' — {} reclaimable:",
+                        "Would clean".cyan().bold(),
+                        profile.bold(),
+                        format_bytes(bytes)
+                    );
+                    for (rel, b) in &found {
+                        println!("    {} ({})", rel.display(), format_bytes(*b));
+                    }
+                    total += bytes;
+                } else {
+                    let reclaimed = purge_caches(&dir)?;
+                    println!(
+                        "{} '{}' — reclaimed {}.",
+                        "Cleaned".green().bold(),
+                        profile.bold(),
+                        format_bytes(reclaimed)
+                    );
+                    total += reclaimed;
+                }
+            }
+
+            if dry_run {
+                println!(
+                    "{} Dry run: {} reclaimable in total. Nothing deleted — re-run without --dry-run to clean.",
+                    "Note:".blue().bold(),
+                    format_bytes(total).yellow()
+                );
+            } else {
+                println!(
+                    "{} Reclaimed {} in total.",
+                    "Success:".green().bold(),
+                    format_bytes(total).bold()
+                );
+            }
         }
 
         Commands::Proxy { action } => match action {

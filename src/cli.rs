@@ -102,6 +102,30 @@ pub enum Commands {
         urls: Vec<String>,
     },
 
+    /// Show per-profile disk usage (cache vs core data)
+    Size {
+        /// Optional profile name; omit to summarize every profile
+        name: Option<String>,
+
+        /// Emit machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Delete regenerable caches from profiles to reclaim disk space
+    Clean {
+        /// Profile to clean; required unless --all
+        name: Option<String>,
+
+        /// Clean every profile of the selected browser
+        #[arg(long)]
+        all: bool,
+
+        /// List what would be deleted without removing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Manage the per-profile egress proxy
     Proxy {
         #[command(subcommand)]

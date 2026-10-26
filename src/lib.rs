@@ -6,4 +6,5 @@ pub mod open;
 pub mod policy;
 pub mod proxy;
 pub mod shortcut;
+pub mod size;
 pub mod storage;

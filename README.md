@@ -123,6 +123,24 @@ bm open personal --browser edge https://github.com https://news.ycombinator.com
 * The CLI returns immediately; the profile's egress proxy is applied automatically.
 * Running browser instances are fine: a distinct profile directory runs side by side. Re-running `bm open <name> <url>` hands the URLs to that profile's running instance.
 
+### Show Disk Usage (Cache vs Core)
+Per-profile byte accounting, split into regenerable cache and valuable core data:
+```bash
+bm size                 # every profile, sorted by total size
+bm size work            # single profile detail
+bm size --json          # machine-readable: {name, total_bytes, cache_bytes, core_bytes}
+```
+Sizes are best-effort snapshots; they are racy while the browser is writing.
+
+### Clean Regenerable Caches
+Reclaim disk space by deleting only regenerable state (HTTP/GPU/shader caches, crash dumps, component stores — see the cache manifest). Sessions, cookies, history, and logins are never touched, and nothing outside `~/.bm/profiles` is ever modified:
+```bash
+bm clean work --dry-run   # list what would be deleted and the reclaimable total
+bm clean work             # purge one profile
+bm clean --all            # purge every profile of the selected browser
+```
+Refuses to run while the browser is running (same guard as `bm switch`).
+
 ### Manage Per-Profile Proxy
 Each profile can route traffic through its own egress proxy (SOCKS5, HTTP, or HTTPS):
 ```bash
