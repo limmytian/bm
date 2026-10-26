@@ -316,6 +316,16 @@ impl StorageManager {
         Ok(meta)
     }
 
+    /// Look up the egress proxy configured for a profile, if any. Profiles
+    /// that exist only as folders (no metadata) have no proxy.
+    pub fn proxy_for(&self, browser: Browser, name: &str) -> Option<ProxyConfig> {
+        self.load_registry()
+            .ok()?
+            .profiles
+            .get(&Self::registry_key(browser, name))
+            .and_then(|m| m.proxy.clone())
+    }
+
     /// Delete a profile.
     pub fn delete_profile(&self, name: &str, browser: Browser) -> Result<()> {
         let target_dir = self.profile_dir(browser, name);
