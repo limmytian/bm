@@ -97,10 +97,15 @@ Switch the globally active browser profile:
 ```bash
 bm switch work
 ```
+Toggle back to the profile you were on before the last switch (`-` resolves to the previous profile from `~/.bm/state.json`):
+```bash
+bm switch -
+```
 *Note: If the browser is currently running, close it first or use `--force` to restart it cleanly:*
 ```bash
 bm switch personal --force
 ```
+`bm list` shows a `SWITCHED` column with how long ago the active profile was activated.
 
 ### Update Notes / Description
 ```bash

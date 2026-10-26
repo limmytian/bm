@@ -59,15 +59,17 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             println!(
-                "  {:<3} {:<18} {:<32} {:<24} {}",
+                "  {:<3} {:<18} {:<32} {:<24} {:<12} {}",
                 "ACT",
                 "NAME".bold(),
                 "DESCRIPTION".bold(),
                 "PROXY".bold(),
+                "SWITCHED".bold(),
                 "CREATED".bold()
             );
-            println!("  {}", "-".repeat(96).dimmed());
+            println!("  {}", "-".repeat(110).dimmed());
 
+            let last_switched_at = storage.last_switched_at(browser);
             for (meta, is_active) in profiles {
                 let act_marker = if is_active {
                     "*".green().bold().to_string()
@@ -94,14 +96,22 @@ fn run(cli: Cli) -> Result<()> {
                     None => "-".dimmed().to_string(),
                 };
 
+                let switched_display = match (is_active, last_switched_at) {
+                    (true, Some(at)) => {
+                        crate::storage::relative_time(at, chrono::Utc::now())
+                    }
+                    _ => "-".dimmed().to_string(),
+                };
+
                 let created_str = meta.created_at.format("%Y-%m-%d %H:%M").to_string();
 
                 println!(
-                    "  {:<3} {:<18} {:<32} {:<24} {}",
+                    "  {:<3} {:<18} {:<32} {:<24} {:<12} {}",
                     act_marker,
                     name_display,
                     desc_display,
                     proxy_display,
+                    switched_display,
                     created_str.dimmed()
                 );
             }
@@ -176,6 +186,7 @@ fn run(cli: Cli) -> Result<()> {
         }
 
         Commands::Switch { name, force } => {
+            let name = resolve_switch_name(&name, storage.previous_profile(browser))?;
             println!(
                 "Switching {} profile to '{}'...",
                 browser.display_name().cyan(),
@@ -670,6 +681,22 @@ fn run(cli: Cli) -> Result<()> {
     Ok(())
 }
 
+/// Resolve `bm switch <name>` where `-` means "the previous profile"
+/// (recorded in ~/.bm/state.json on every successful switch). `-` is not a
+/// valid profile name, so there is no ambiguity.
+fn resolve_switch_name(raw: &str, previous: Option<String>) -> Result<String> {
+    if raw == "-" {
+        previous.ok_or_else(|| {
+            crate::error::BmError::Other(
+                "No previous profile recorded yet — switch once, then `bm switch -` toggles back."
+                    .into(),
+            )
+        })
+    } else {
+        Ok(raw.to_string())
+    }
+}
+
 /// Truncate a string to `max` characters (char-boundary safe) with an ellipsis.
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -705,6 +732,7 @@ fn is_active_profile(storage: &StorageManager, browser: crate::browser::Browser,
         == Some(name)
 }
 
+
 /// On macOS the active profile's managed policy overrides the proxy flags of
 /// side-by-side shortcut launches of the same browser (policy > command line
 /// in Chromium). Warn when another profile also carries a proxy, since those
@@ -730,5 +758,20 @@ fn warn_side_by_side_override(
             "Warning:".yellow().bold(),
             active_proxy.to_string().yellow()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switch_dash_resolves_previous_profile() {
+        assert_eq!(resolve_switch_name("work", None).unwrap(), "work");
+        assert_eq!(
+            resolve_switch_name("-", Some("work".into())).unwrap(),
+            "work"
+        );
+        assert!(resolve_switch_name("-", None).is_err());
     }
 }

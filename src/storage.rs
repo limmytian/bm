@@ -26,6 +26,31 @@ pub struct Registry {
     pub profiles: HashMap<String, ProfileMetadata>,
 }
 
+/// Per-browser switch history persisted in `~/.bm/state.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserSwitchState {
+    /// Profile active before the current one — the `bm switch -` target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_switched_at: Option<DateTime<Utc>>,
+}
+
+/// `~/.bm/state.json` shape: keyed by browser name.
+pub type SwitchState = HashMap<String, BrowserSwitchState>;
+
+/// Render a coarse relative time ("just now", "5m ago", "3h ago", "12d ago").
+pub fn relative_time(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let secs = (now - at).num_seconds().max(0);
+    match secs {
+        0..=59 => "just now".into(),
+        60..=3599 => format!("{}m ago", secs / 60),
+        3600..=86399 => format!("{}h ago", secs / 3600),
+        s => format!("{}d ago", s / 86400),
+    }
+}
+
 pub struct StorageManager {
     base_dir: PathBuf,
     /// Test seam: overrides the browser's default user-data dir (the global
@@ -86,6 +111,61 @@ impl StorageManager {
 
     pub fn metadata_file(&self) -> PathBuf {
         self.base_dir.join("metadata.json")
+    }
+
+    pub fn state_file(&self) -> PathBuf {
+        self.base_dir.join("state.json")
+    }
+
+    /// Load the switch-state map; missing or corrupt files read as empty.
+    pub fn load_switch_state(&self) -> SwitchState {
+        let file = self.state_file();
+        if !file.exists() {
+            return SwitchState::default();
+        }
+        fs::read_to_string(&file)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+            .unwrap_or_default()
+    }
+
+    /// Record a completed switch for `browser`: the previously active profile
+    /// becomes the `bm switch -` target. Written atomically (temp + rename).
+    pub fn record_switch(&self, browser: Browser, previous: Option<String>) -> Result<()> {
+        let mut state = self.load_switch_state();
+        state.insert(
+            browser.to_string(),
+            BrowserSwitchState {
+                last: previous,
+                last_switched_at: Some(Utc::now()),
+            },
+        );
+        self.save_switch_state(&state)
+    }
+
+    fn save_switch_state(&self, state: &SwitchState) -> Result<()> {
+        if !self.base_dir.exists() {
+            fs::create_dir_all(&self.base_dir)?;
+        }
+        let tmp = self.base_dir.join("state.json.tmp");
+        fs::write(&tmp, serde_json::to_string_pretty(state)?)?;
+        fs::rename(&tmp, self.state_file())?;
+        Ok(())
+    }
+
+    /// The profile that was active before the current one (`bm switch -`).
+    pub fn previous_profile(&self, browser: Browser) -> Option<String> {
+        self.load_switch_state()
+            .get(&browser.to_string())?
+            .last
+            .clone()
+    }
+
+    /// When this browser last switched profiles, for the list column.
+    pub fn last_switched_at(&self, browser: Browser) -> Option<DateTime<Utc>> {
+        self.load_switch_state()
+            .get(&browser.to_string())?
+            .last_switched_at
     }
 
     pub fn ensure_dirs(&self, browser: Browser) -> Result<()> {
@@ -395,6 +475,12 @@ impl StorageManager {
             });
         }
 
+        // Capture the profile being left, for `bm switch -`. Recorded after
+        // the switch succeeds; only bm-managed activations count.
+        let previous = self
+            .get_current_active(browser)?
+            .filter(|p| !p.starts_with("external ("));
+
         if browser.is_running() {
             if force {
                 browser.terminate()?;
@@ -462,6 +548,10 @@ impl StorageManager {
         return Err(BmError::UnsupportedPlatform(
             "Symlink creation requires Unix-based operating system".into(),
         ));
+
+        // Best-effort: the switch itself succeeded; a state-write hiccup
+        // must not fail the command.
+        let _ = self.record_switch(browser, previous);
 
         Ok(backup_created)
     }
@@ -857,5 +947,46 @@ mod tests {
         assert!(storage.rename_profile_unchecked("old", "taken", browser).is_err());
         // Renaming onto itself is caught by the exists guard.
         assert!(storage.rename_profile_unchecked("old", "old", browser).is_err());
+    }
+
+    #[test]
+    fn switch_state_roundtrip() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        assert_eq!(storage.previous_profile(browser), None);
+        assert_eq!(storage.last_switched_at(browser), None);
+
+        storage.record_switch(browser, Some("work".into())).unwrap();
+        assert_eq!(storage.previous_profile(browser).as_deref(), Some("work"));
+        assert!(storage.last_switched_at(browser).is_some());
+
+        // Persists across instances (same base dir).
+        let reloaded = StorageManager::with_base_dir(storage.base_dir().to_path_buf());
+        assert_eq!(reloaded.previous_profile(browser).as_deref(), Some("work"));
+
+        // A later switch replaces the previous-profile pointer.
+        storage.record_switch(browser, Some("personal".into())).unwrap();
+        assert_eq!(storage.previous_profile(browser).as_deref(), Some("personal"));
+
+        // Per-browser isolation.
+        storage.record_switch(Browser::Edge, Some("edge-prev".into())).unwrap();
+        assert_eq!(storage.previous_profile(browser).as_deref(), Some("personal"));
+        assert_eq!(storage.previous_profile(Browser::Edge).as_deref(), Some("edge-prev"));
+
+        // A corrupt state file reads as empty instead of crashing.
+        fs::write(storage.state_file(), "not json{").unwrap();
+        assert_eq!(storage.previous_profile(browser), None);
+        assert_eq!(storage.last_switched_at(browser), None);
+    }
+
+    #[test]
+    fn relative_time_buckets() {
+        let now = Utc::now();
+        assert_eq!(relative_time(now - chrono::Duration::seconds(10), now), "just now");
+        assert_eq!(relative_time(now - chrono::Duration::minutes(5), now), "5m ago");
+        assert_eq!(relative_time(now - chrono::Duration::hours(3), now), "3h ago");
+        assert_eq!(relative_time(now - chrono::Duration::days(12), now), "12d ago");
+        // Future timestamps clamp instead of going negative.
+        assert_eq!(relative_time(now + chrono::Duration::hours(2), now), "just now");
     }
 }
