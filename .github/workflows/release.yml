@@ -102,6 +102,10 @@ jobs:
   update-tap:
     name: Update homebrew-tap formula
     needs: [build-linux, build-macos]
+    # Runs even when the macOS job was queue-cancelled by free-tier capacity:
+    # the per-file checksum guard below is the real gate, so darwin assets
+    # may also be supplied out-of-band during runner shortages.
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
