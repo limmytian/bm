@@ -157,6 +157,19 @@ bm clean --all            # purge every profile of the selected browser
 ```
 Refuses to run while the browser is running (same guard as `bm switch`).
 
+### Backup & Restore (Local Snapshots)
+Snapshot a profile to a timestamped `tar.zst` archive under `~/.bm/backups/` — sessions, cookies, logins, and extensions in one file. Regenerable caches are excluded (`--full` includes them); an embedded manifest carries the description and egress proxy so restores re-register them automatically:
+```bash
+bm backup work
+bm backup work --keep 5        # prune older snapshots beyond the 5 newest
+bm restore ~/.bm/backups/chrome-work-20261027120000.tar.zst
+bm restore <archive> --name work-rollback   # restore under a different name
+bm restore <archive> --force                # overwrite an existing profile
+```
+* `bm backup` and `bm restore` refuse to run while the browser is running (same guard as `bm switch`).
+* `bm delete` now suggests taking a backup first.
+* Local-machine only: archives are ordinary files you can copy elsewhere, but bm does not sync them.
+
 ### Health Audit
 Audit the bm-managed state for common problems — dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:
 ```bash

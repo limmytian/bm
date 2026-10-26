@@ -1,3 +1,4 @@
+mod backup;
 mod browser;
 mod cache;
 mod cli;
@@ -274,6 +275,12 @@ fn run(cli: Cli) -> Result<()> {
                     "Are you sure you want to permanently delete profile '{}' and all its user data? [y/N]: ",
                     name.red().bold()
                 );
+                println!(
+                    "\n  {} Consider {} first — snapshots keep sessions and logins.",
+                    "Tip:".blue().bold(),
+                    format!("bm backup {}", name).green()
+                );
+                print!("Proceed [y/N]: ");
                 io::stdout().flush().map_err(crate::error::BmError::Io)?;
 
                 let mut input = String::new();
@@ -474,6 +481,46 @@ fn run(cli: Cli) -> Result<()> {
                     format_bytes(total).bold()
                 );
             }
+        }
+
+        Commands::Backup { name, full, keep } => {
+            use crate::backup::create_backup;
+
+            let outcome = create_backup(&storage, browser, &name, full, keep)?;
+            println!(
+                "{} Snapshot saved to {}",
+                "Success:".green().bold(),
+                outcome.path.display().to_string().cyan().bold()
+            );
+            println!(
+                "  Archive: {} ({:.0}% of the profile's {})",
+                format_bytes(outcome.archive_bytes),
+                100.0 * outcome.archive_bytes as f64 / outcome.profile_bytes.max(1) as f64,
+                format_bytes(outcome.profile_bytes)
+            );
+            if outcome.pruned > 0 {
+                println!("  Pruned {} older backup(s) (--keep).", outcome.pruned);
+            }
+            println!(
+                "Restore it later with: {}",
+                format!("bm restore {}", outcome.path.display()).green()
+            );
+        }
+
+        Commands::Restore { file, name, force } => {
+            use crate::backup::restore_archive;
+
+            let meta = restore_archive(&storage, &file, name.as_deref(), force)?;
+            println!(
+                "{} Restored profile '{}' for {}.",
+                "Success:".green().bold(),
+                meta.name.bold(),
+                browser.display_name().cyan()
+            );
+            println!(
+                "Description and egress proxy came from the archive manifest; activate with {}.",
+                format!("bm switch {}", meta.name).green()
+            );
         }
 
         Commands::Doctor { fix } => {

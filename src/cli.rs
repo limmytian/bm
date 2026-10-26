@@ -139,6 +139,34 @@ pub enum Commands {
         dry_run: bool,
     },
 
+    /// Create a local snapshot of a profile (tar+zstd, caches excluded)
+    Backup {
+        /// Profile to back up
+        name: String,
+
+        /// Include regenerable caches (skipped by default)
+        #[arg(long)]
+        full: bool,
+
+        /// Keep only the N newest backups of this profile (default: keep all)
+        #[arg(long)]
+        keep: Option<usize>,
+    },
+
+    /// Restore a profile snapshot created by bm backup
+    Restore {
+        /// Path to a .tar.zst archive (e.g. under ~/.bm/backups)
+        file: PathBuf,
+
+        /// Restore under a different profile name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Overwrite an existing profile with the same name
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Audit profile storage health and offer safe repairs
     Doctor {
         /// Apply the safe repairs (dangling symlink removal, metadata backfill)
