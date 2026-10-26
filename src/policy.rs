@@ -1,3 +1,6 @@
+// `defaults` is invoked only on the macOS policy path; on other targets the
+// import would be unused and break `-D warnings` builds.
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use crate::browser::Browser;
@@ -42,6 +45,7 @@ pub fn sync_for_active_profile(storage: &StorageManager, browser: Browser) -> Re
 /// macOS `defaults` argv vectors that apply (proxy present) or clear (proxy
 /// absent) the proxy managed policy for the given browser policy domain.
 /// Pure so it is unit-testable on every platform.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn macos_policy_commands(proxy: Option<&ProxyConfig>, domain: &str) -> Vec<Vec<String>> {
     let domain = domain.to_string();
 
@@ -149,6 +153,7 @@ fn apply(_browser: Browser, _proxy: Option<&ProxyConfig>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn warn_failed(command: &str, detail: &str) {
     eprintln!(
         "Warning: proxy policy command failed, traffic may NOT be routed through the proxy: `{}` ({})",
