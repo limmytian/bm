@@ -1,6 +1,7 @@
 mod browser;
 mod cache;
 mod cli;
+mod doctor;
 mod error;
 mod open;
 mod policy;
@@ -469,6 +470,56 @@ fn run(cli: Cli) -> Result<()> {
                     "Success:".green().bold(),
                     format_bytes(total).bold()
                 );
+            }
+        }
+
+        Commands::Doctor { fix } => {
+            use crate::doctor::{apply_fixes, run_checks};
+
+            let issues = run_checks(&storage, browser)?;
+            if issues.is_empty() {
+                println!(
+                    "{} All health checks passed for {}.",
+                    "OK:".green().bold(),
+                    browser.display_name().cyan()
+                );
+                return Ok(());
+            }
+
+            for issue in &issues {
+                let marker = if issue.repair.is_some() {
+                    "fixable".cyan()
+                } else {
+                    "report-only".dimmed()
+                };
+                println!(
+                    "{} [{}] {} ({})",
+                    "Issue:".yellow().bold(),
+                    issue.check,
+                    issue.detail,
+                    marker
+                );
+            }
+
+            if fix {
+                let fixed = apply_fixes(&storage, &issues)?;
+                let remaining = issues.len() - fixed;
+                println!(
+                    "{} Applied {} repair(s); {} issue(s) need manual attention (see report-only above).",
+                    "Success:".green().bold(),
+                    fixed,
+                    remaining
+                );
+            } else {
+                let fixable = issues.iter().filter(|i| i.repair.is_some()).count();
+                if fixable > 0 {
+                    println!(
+                        "{} {} issue(s) can be repaired automatically — re-run with {}.",
+                        "Note:".blue().bold(),
+                        fixable,
+                        "--fix".green()
+                    );
+                }
             }
         }
 

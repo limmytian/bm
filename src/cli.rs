@@ -139,6 +139,13 @@ pub enum Commands {
         dry_run: bool,
     },
 
+    /// Audit profile storage health and offer safe repairs
+    Doctor {
+        /// Apply the safe repairs (dangling symlink removal, metadata backfill)
+        #[arg(long)]
+        fix: bool,
+    },
+
     /// Manage the per-profile egress proxy
     Proxy {
         #[command(subcommand)]

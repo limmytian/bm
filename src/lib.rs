@@ -1,6 +1,7 @@
 pub mod browser;
 pub mod cache;
 pub mod cli;
+pub mod doctor;
 pub mod error;
 pub mod open;
 pub mod policy;

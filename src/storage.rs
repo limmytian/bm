@@ -65,7 +65,7 @@ impl StorageManager {
     }
 
     /// The browser's default user-data dir, honoring the test override.
-    fn default_data_dir(&self, browser: Browser) -> Result<PathBuf> {
+    pub(crate) fn default_data_dir(&self, browser: Browser) -> Result<PathBuf> {
         match &self.default_dir_override {
             Some(dir) => Ok(dir.clone()),
             None => browser.default_data_dir(),

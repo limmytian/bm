@@ -149,6 +149,14 @@ bm clean --all            # purge every profile of the selected browser
 ```
 Refuses to run while the browser is running (same guard as `bm switch`).
 
+### Health Audit
+Audit the bm-managed state for common problems — dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:
+```bash
+bm doctor          # report only
+bm doctor --fix    # apply the safe repairs: remove a dangling symlink, backfill missing metadata
+```
+Everything marked `report-only` needs manual action; the command prints the suggested fix for each finding.
+
 ### Manage Per-Profile Proxy
 Each profile can route traffic through its own egress proxy (SOCKS5, HTTP, or HTTPS):
 ```bash
