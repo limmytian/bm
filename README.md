@@ -5,7 +5,7 @@
 <h1 align="center">bm</h1>
 
 <p align="center">
-  <strong>Browser Profile & Session Sandbox Manager for Chrome & Edge</strong>
+  <strong>Browser Profile & Session Sandbox Manager for Chrome, Edge, Brave & Chromium</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 `bm` is an ultra-fast, lightweight CLI written in Rust to manage, isolate, switch, and launch browser user profiles (sessions, cookies, local storage, history) in a **conda-like workflow**.
 
-Both **Google Chrome** and **Microsoft Edge** are natively supported.
+**Google Chrome**, **Microsoft Edge**, **Brave**, and **Chromium** are natively supported.
 
 ---
 
@@ -28,7 +28,7 @@ Both **Google Chrome** and **Microsoft Edge** are natively supported.
 * **Safe Automatic First-Run Migration**: When switching for the first time, your pre-existing browser data is automatically safely backed up as profile `original`.
 * **Running Process Guard**: Warns or terminates running browser instances to prevent SQLite database locks when switching.
 * **Standalone Desktop Shortcuts**: `bm shortcut <name>` generates an independent macOS `.app` bundle or Linux launcher script, allowing you to run multiple accounts side-by-side without mutating the globally active symlink.
-* **Multi-Browser Support**: Seamlessly manage Google Chrome and Microsoft Edge environments with `--browser chrome` or `--browser edge`.
+* **Multi-Browser Support**: Seamlessly manage Chrome, Edge, Brave, and Chromium environments with `--browser chrome|edge|brave|chromium`. Firefox and Arc are intentionally out of scope — their profile models differ from the Chromium user-data-dir layout bm is built around.
 * **Per-Profile Egress Proxy**: Route each environment through its own SOCKS5/HTTP(S) proxy with WebRTC leak protection and SOCKS5 DNS pinning. Honored by standalone shortcuts out of the box and by globally activated launches via Chrome/Edge managed policy (macOS).
 
 ---

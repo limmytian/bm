@@ -14,7 +14,7 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
-    /// Target browser (chrome or edge) [default: chrome]
+    /// Target browser (chrome, edge, brave, or chromium)
     #[arg(short, long, global = true, value_enum, default_value_t = Browser::Chrome)]
     pub browser: Browser,
 }

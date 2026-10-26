@@ -145,6 +145,8 @@ impl ShortcutGenerator {
         let prefix = match browser {
             Browser::Chrome => "Chrome",
             Browser::Edge => "Edge",
+            Browser::Brave => "Brave",
+            Browser::Chromium => "Chromium",
         };
 
         let app_name = format!("{} ({}).app", prefix, profile_name);
@@ -250,6 +252,8 @@ impl ShortcutGenerator {
                 let icon_name = match browser {
                     Browser::Chrome => "google-chrome",
                     Browser::Edge => "microsoft-edge",
+                    Browser::Brave => "brave-browser",
+                    Browser::Chromium => "chromium",
                 };
                 let desktop_content = format!(
                     "[Desktop Entry]\n\
@@ -351,6 +355,8 @@ fn find_stale_app_bundles(browser: Browser, old_dir: &Path, dir: &Path) -> Vec<P
     let prefix = match browser {
         Browser::Chrome => "Chrome",
         Browser::Edge => "Edge",
+        Browser::Brave => "Brave",
+        Browser::Chromium => "Chromium",
     };
     let old_dir_str = old_dir.to_string_lossy().to_string();
     let mut found = Vec::new();

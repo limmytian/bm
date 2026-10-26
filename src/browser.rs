@@ -13,6 +13,10 @@ pub enum Browser {
     Chrome,
     #[value(name = "edge", alias = "microsoft-edge")]
     Edge,
+    #[value(name = "brave", alias = "brave-browser")]
+    Brave,
+    #[value(name = "chromium", alias = "chromium-browser")]
+    Chromium,
 }
 
 impl fmt::Display for Browser {
@@ -20,6 +24,8 @@ impl fmt::Display for Browser {
         match self {
             Browser::Chrome => write!(f, "chrome"),
             Browser::Edge => write!(f, "edge"),
+            Browser::Brave => write!(f, "brave"),
+            Browser::Chromium => write!(f, "chromium"),
         }
     }
 }
@@ -30,6 +36,8 @@ impl Browser {
         match self {
             Browser::Chrome => "Google Chrome",
             Browser::Edge => "Microsoft Edge",
+            Browser::Brave => "Brave",
+            Browser::Chromium => "Chromium",
         }
     }
 
@@ -38,6 +46,8 @@ impl Browser {
         match self {
             Browser::Chrome => "com.google.Chrome",
             Browser::Edge => "com.microsoft.Edge",
+            Browser::Brave => "com.brave.Browser",
+            Browser::Chromium => "org.chromium.Chromium",
         }
     }
 
@@ -47,6 +57,8 @@ impl Browser {
         match self {
             Browser::Chrome => "google-chrome.desktop",
             Browser::Edge => "microsoft-edge.desktop",
+            Browser::Brave => "brave-browser.desktop",
+            Browser::Chromium => "chromium.desktop",
         }
     }
 
@@ -60,11 +72,15 @@ impl Browser {
             match self {
                 Browser::Chrome => Ok(home.join("Library/Application Support/Google/Chrome")),
                 Browser::Edge => Ok(home.join("Library/Application Support/Microsoft Edge")),
+                Browser::Brave => Ok(home.join("Library/Application Support/BraveSoftware/Brave-Browser")),
+                Browser::Chromium => Ok(home.join("Library/Application Support/Chromium")),
             }
         } else if cfg!(target_os = "linux") {
             match self {
                 Browser::Chrome => Ok(home.join(".config/google-chrome")),
                 Browser::Edge => Ok(home.join(".config/microsoft-edge")),
+                Browser::Brave => Ok(home.join(".config/BraveSoftware/Brave-Browser")),
+                Browser::Chromium => Ok(home.join(".config/chromium")),
             }
         } else {
             Err(BmError::UnsupportedPlatform(
@@ -79,6 +95,8 @@ impl Browser {
             let app = match self {
                 Browser::Chrome => PathBuf::from("/Applications/Google Chrome.app"),
                 Browser::Edge => PathBuf::from("/Applications/Microsoft Edge.app"),
+                Browser::Brave => PathBuf::from("/Applications/Brave Browser.app"),
+                Browser::Chromium => PathBuf::from("/Applications/Chromium.app"),
             };
             if app.exists() {
                 Ok(app)
@@ -103,6 +121,8 @@ impl Browser {
             let binary = match self {
                 Browser::Chrome => app.join("Contents/MacOS/Google Chrome"),
                 Browser::Edge => app.join("Contents/MacOS/Microsoft Edge"),
+                Browser::Brave => app.join("Contents/MacOS/Brave Browser"),
+                Browser::Chromium => app.join("Contents/MacOS/Chromium"),
             };
             if binary.exists() {
                 Ok(binary)
@@ -116,6 +136,8 @@ impl Browser {
             let name = match self {
                 Browser::Chrome => "google-chrome",
                 Browser::Edge => "microsoft-edge",
+                Browser::Brave => "brave-browser",
+                Browser::Chromium => "chromium",
             };
             Ok(PathBuf::from(name))
         } else {
@@ -140,6 +162,20 @@ impl Browser {
                     "Microsoft Edge"
                 } else {
                     "msedge"
+                }
+            }
+            Browser::Brave => {
+                if cfg!(target_os = "macos") {
+                    "Brave Browser"
+                } else {
+                    "brave"
+                }
+            }
+            Browser::Chromium => {
+                if cfg!(target_os = "macos") {
+                    "Chromium"
+                } else {
+                    "chromium"
                 }
             }
         };
@@ -170,6 +206,20 @@ impl Browser {
                     "Microsoft Edge"
                 } else {
                     "msedge"
+                }
+            }
+            Browser::Brave => {
+                if cfg!(target_os = "macos") {
+                    "Brave Browser"
+                } else {
+                    "brave"
+                }
+            }
+            Browser::Chromium => {
+                if cfg!(target_os = "macos") {
+                    "Chromium"
+                } else {
+                    "chromium"
                 }
             }
         };

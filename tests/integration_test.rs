@@ -67,9 +67,52 @@ fn test_profile_lifecycle_in_isolated_storage() {
 fn test_browser_properties() {
     assert_eq!(Browser::Chrome.display_name(), "Google Chrome");
     assert_eq!(Browser::Edge.display_name(), "Microsoft Edge");
+    assert_eq!(Browser::Brave.display_name(), "Brave");
+    assert_eq!(Browser::Chromium.display_name(), "Chromium");
 
     assert!(Browser::Chrome.default_data_dir().is_ok());
     assert!(Browser::Edge.default_data_dir().is_ok());
+    assert!(Browser::Brave.default_data_dir().is_ok());
+    assert!(Browser::Chromium.default_data_dir().is_ok());
+
+    // Policy domains feed the macOS managed-policy path.
+    assert_eq!(Browser::Chrome.policy_domain(), "com.google.Chrome");
+    assert_eq!(Browser::Edge.policy_domain(), "com.microsoft.Edge");
+    assert_eq!(Browser::Brave.policy_domain(), "com.brave.Browser");
+    assert_eq!(Browser::Chromium.policy_domain(), "org.chromium.Chromium");
+}
+
+#[test]
+fn test_brave_and_chromium_data_dirs() {
+    // Brave uses the BraveSoftware layout on both platforms.
+    let brave = Browser::Brave.default_data_dir().unwrap();
+    assert!(brave.ends_with("BraveSoftware/Brave-Browser"));
+
+    // Chromium: ~/Library/Application Support/Chromium (macOS)
+    // or ~/.config/chromium (Linux).
+    let chromium = Browser::Chromium.default_data_dir().unwrap();
+    assert!(
+        chromium.ends_with("Application Support/Chromium") || chromium.ends_with("config/chromium"),
+        "unexpected Chromium data dir: {}",
+        chromium.display()
+    );
+
+    // Profile storage nests under the browser display key.
+    let tmp = tempdir().unwrap();
+    let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
+    let meta = storage
+        .create_profile("sandbox", None, Browser::Brave)
+        .unwrap();
+    assert_eq!(meta.browser, Browser::Brave);
+    assert!(storage
+        .profile_dir(Browser::Brave, "sandbox")
+        .starts_with(tmp.path().join(".bm/profiles/brave")));
+
+    // Not-installed browsers fail gracefully with the bundle path named.
+    if let Err(e) = Browser::Brave.app_path() {
+        let msg = e.to_string();
+        assert!(msg.contains("Brave Browser.app"), "unhelpful error: {msg}");
+    }
 }
 
 #[test]

@@ -386,6 +386,8 @@ impl Browser {
         match raw {
             "chrome" => Ok(Browser::Chrome),
             "edge" => Ok(Browser::Edge),
+            "brave" => Ok(Browser::Brave),
+            "chromium" => Ok(Browser::Chromium),
             other => Err(BmError::Other(format!(
                 "archive manifest names unsupported browser '{other}'"
             ))),

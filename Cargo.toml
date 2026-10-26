@@ -2,7 +2,7 @@
 name = "bm"
 version = "0.0.3"
 edition = "2021"
-description = "Browser profile and session sandbox manager for Chrome and Edge"
+description = "Browser profile and session sandbox manager for Chrome, Edge, Brave, and Chromium"
 authors = ["limmytian <limmytian@gmail.com>"]
 license = "Apache-2.0"
 readme = "README.md"
