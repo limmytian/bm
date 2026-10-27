@@ -12,5 +12,6 @@ pub mod running;
 pub mod schedule;
 pub mod shortcut;
 pub mod size;
+pub mod status;
 pub mod storage;
 pub mod transfer;

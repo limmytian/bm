@@ -60,7 +60,10 @@ pub struct BackupOutcome {
 /// One row of a `bm backup --all` run.
 #[derive(Debug)]
 pub enum AllBackupOutcome {
-    BackedUp { name: String, outcome: BackupOutcome },
+    BackedUp {
+        name: String,
+        outcome: BackupOutcome,
+    },
     /// Profile skipped because a live browser process holds it.
     SkippedRunning { name: String, pid: Option<u32> },
     /// Profile failed; the run continues with the remaining profiles.
@@ -87,12 +90,18 @@ pub fn create_backup_all(
     for name in profiles {
         let dir = storage.profile_dir(browser, &name);
         if let Some(pid) = crate::running::running_pid(&dir)? {
-            outcomes.push(AllBackupOutcome::SkippedRunning { name, pid: Some(pid) });
+            outcomes.push(AllBackupOutcome::SkippedRunning {
+                name,
+                pid: Some(pid),
+            });
             continue;
         }
         match create_backup_unchecked(storage, browser, &name, full, keep, passphrase) {
             Ok(outcome) => outcomes.push(AllBackupOutcome::BackedUp { name, outcome }),
-            Err(e) => outcomes.push(AllBackupOutcome::Failed { name, error: e.to_string() }),
+            Err(e) => outcomes.push(AllBackupOutcome::Failed {
+                name,
+                error: e.to_string(),
+            }),
         }
     }
     Ok(outcomes)
@@ -189,17 +198,31 @@ pub fn create_backup_unchecked(
     let dir = backups_dir(storage);
     fs::create_dir_all(&dir)?;
     let timestamp = Utc::now().format("%Y%m%d%H%M%S");
-    let suffix = if passphrase.is_some() { ENCRYPTED_SUFFIX } else { PLAIN_SUFFIX };
+    let suffix = if passphrase.is_some() {
+        ENCRYPTED_SUFFIX
+    } else {
+        PLAIN_SUFFIX
+    };
     let path = dir.join(format!("{browser}-{name}-{timestamp}{suffix}"));
     // Write through a .tmp name so a killed backup never leaves a
     // half-written archive that looks complete.
     let tmp_path = dir.join(format!(
         "{}.tmp",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or_default()
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
     ));
 
     let profile_bytes = crate::size::measure(&profile_dir)?.total_bytes;
-    let archive_bytes = match write_archive(storage, browser, name, &profile_dir, &tmp_path, full, passphrase) {
+    let archive_bytes = match write_archive(
+        storage,
+        browser,
+        name,
+        &profile_dir,
+        &tmp_path,
+        full,
+        passphrase,
+    ) {
         Ok(bytes) => bytes,
         Err(e) => {
             let _ = fs::remove_file(&tmp_path);
@@ -263,13 +286,13 @@ fn write_archive(
     passphrase: Option<&SecretString>,
 ) -> Result<u64> {
     let meta = storage.load_registry()?;
-    let registered = meta
-        .profiles
-        .get(&format!("{browser}:{name}"));
+    let registered = meta.profiles.get(&format!("{browser}:{name}"));
     let manifest = BackupManifest {
         name: name.to_string(),
         browser: browser.to_string(),
-        description: registered.map(|m| m.description.clone()).unwrap_or_default(),
+        description: registered
+            .map(|m| m.description.clone())
+            .unwrap_or_default(),
         proxy: registered.and_then(|m| m.proxy.clone()),
         created_at: Utc::now(),
         bm_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -379,7 +402,10 @@ pub fn prune_old_backups(dir: &Path, browser: Browser, name: &str, keep: usize) 
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with(&prefix) && (n.ends_with(PLAIN_SUFFIX) || n.ends_with(ENCRYPTED_SUFFIX)))
+                .map(|n| {
+                    n.starts_with(&prefix)
+                        && (n.ends_with(PLAIN_SUFFIX) || n.ends_with(ENCRYPTED_SUFFIX))
+                })
                 .unwrap_or(false)
         })
         .collect();
@@ -392,6 +418,77 @@ pub fn prune_old_backups(dir: &Path, browser: Browser, name: &str, keep: usize) 
         removed += 1;
     }
     Ok(removed)
+}
+
+/// The newest archive of one profile, for `bm status` and friends.
+#[derive(Debug, Clone)]
+pub struct LatestBackup {
+    pub path: PathBuf,
+    pub created_at: DateTime<Utc>,
+    pub bytes: u64,
+    pub encrypted: bool,
+}
+
+/// The newest backup archive of `name` under `dir` (backup filename
+/// timestamps sort lexicographically, so max == newest).
+pub fn latest_backup(dir: &Path, browser: Browser, name: &str) -> Result<Option<LatestBackup>> {
+    let prefix = format!("{browser}-{name}-");
+    let mut newest: Option<PathBuf> = None;
+    for entry in fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        let matches = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| {
+                n.starts_with(&prefix)
+                    && (n.ends_with(PLAIN_SUFFIX) || n.ends_with(ENCRYPTED_SUFFIX))
+            })
+            .unwrap_or(false);
+        if matches
+            && newest
+                .as_ref()
+                .is_none_or(|best| path.file_name() > best.file_name())
+        {
+            newest = Some(path);
+        }
+    }
+    let Some(path) = newest else {
+        return Ok(None);
+    };
+    let name_str = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // <browser>-<name>-<YYYYmmddHHMMSS>.tar.zst[.age] — the timestamp is a
+    // fixed 14 digits right after the prefix.
+    let created_at = name_str
+        .strip_prefix(&prefix)
+        .map(|rest| rest.split('.').next().unwrap_or(rest))
+        .filter(|ts| ts.len() >= 14 && ts.chars().take(14).all(|c| c.is_ascii_digit()))
+        .and_then(|ts| {
+            // Deliberately not parse_from_str("%Y%m%d%H%M%S"): chrono's %Y
+            // parses digits greedily and would swallow the whole run.
+            let iso = format!(
+                "{}-{}-{}T{}:{}:{}Z",
+                &ts[0..4],
+                &ts[4..6],
+                &ts[6..8],
+                &ts[8..10],
+                &ts[10..12],
+                &ts[12..14]
+            );
+            DateTime::parse_from_rfc3339(&iso)
+                .ok()
+                .map(|t| t.with_timezone(&Utc))
+        })
+        .unwrap_or_else(Utc::now);
+    let bytes = fs::metadata(&path)?.len();
+    Ok(Some(LatestBackup {
+        path,
+        created_at,
+        bytes,
+        encrypted: name_str.ends_with(ENCRYPTED_SUFFIX),
+    }))
 }
 
 /// Restore an archive into `~/.bm/profiles/<manifest-browser>/<name>`
@@ -484,10 +581,7 @@ pub fn restore_archive_unchecked(
 /// A passphrase must be supplied for encrypted archives; a wrong passphrase
 /// (or tampered file) fails authentication with a clear error — the age
 /// format never yields silent garbage.
-fn open_archive_reader(
-    archive: &Path,
-    passphrase: Option<&SecretString>,
-) -> Result<Box<dyn Read>> {
+fn open_archive_reader(archive: &Path, passphrase: Option<&SecretString>) -> Result<Box<dyn Read>> {
     let file = fs::File::open(archive)
         .map_err(|e| BmError::Other(format!("cannot open archive {}: {e}", archive.display())))?;
     if !is_encrypted_archive(archive) {
@@ -500,7 +594,10 @@ fn open_archive_reader(
         )));
     };
     let decryptor = age::Decryptor::new(file).map_err(|e| {
-        BmError::Other(format!("{} is not a valid age-encrypted archive: {e}", archive.display()))
+        BmError::Other(format!(
+            "{} is not a valid age-encrypted archive: {e}",
+            archive.display()
+        ))
     })?;
     let identity = age::scrypt::Identity::new(p.clone());
     let reader = decryptor
@@ -569,7 +666,10 @@ pub fn verify_archive(archive: &Path, passphrase: Option<&SecretString>) -> Resu
         })?;
         let mut magic = [0u8; 4];
         file.read_exact(&mut magic).map_err(|e| {
-            BmError::Other(format!("{} is too short to be a backup: {e}", archive.display()))
+            BmError::Other(format!(
+                "{} is too short to be a backup: {e}",
+                archive.display()
+            ))
         })?;
         if magic != [0x28, 0xB5, 0x2F, 0xFD] {
             return Err(BmError::Other(format!(
@@ -656,11 +756,7 @@ fn validate_manifest(manifest: &BackupManifest, archive: &Path) -> Result<()> {
 
 /// Extract all entries below `dest`, rejecting path traversal (absolute
 /// paths, `..`, prefixes) so a hostile archive cannot escape the profile dir.
-fn extract_archive(
-    archive: &Path,
-    dest: &Path,
-    passphrase: Option<&SecretString>,
-) -> Result<()> {
+fn extract_archive(archive: &Path, dest: &Path, passphrase: Option<&SecretString>) -> Result<()> {
     let reader = open_archive_reader(archive, passphrase)?;
     let decoder = zstd::Decoder::new(reader)?;
     let mut tar = tar::Archive::new(decoder);
@@ -757,14 +853,9 @@ mod tests {
         assert!(outcome.profile_bytes > 0);
 
         // Restore under a new name (renamed restore).
-        let meta = restore_archive_unchecked(
-            &storage,
-            &outcome.path,
-            Some("work-restored"),
-            false,
-            None,
-        )
-        .unwrap();
+        let meta =
+            restore_archive_unchecked(&storage, &outcome.path, Some("work-restored"), false, None)
+                .unwrap();
         assert_eq!(meta.name, "work-restored");
         assert_eq!(meta.description, "snapshot source");
         assert_eq!(
@@ -773,7 +864,10 @@ mod tests {
         );
 
         let dst = storage.profile_dir(browser, "work-restored");
-        assert_eq!(fs::read_to_string(dst.join("Default/Cookies")).unwrap(), "cookie-db");
+        assert_eq!(
+            fs::read_to_string(dst.join("Default/Cookies")).unwrap(),
+            "cookie-db"
+        );
         // Cache was excluded from the backup.
         assert!(!dst.join("Cache").exists());
 
@@ -789,11 +883,10 @@ mod tests {
         seed(&storage, browser, "work");
 
         let outcome = create_backup_unchecked(&storage, browser, "work", true, None, None).unwrap();
-        let meta = restore_archive_unchecked(&storage, &outcome.path, Some("full"), false, None).unwrap();
+        let meta =
+            restore_archive_unchecked(&storage, &outcome.path, Some("full"), false, None).unwrap();
         let _ = meta;
-        assert!(storage
-            .profile_dir(browser, "full/Cache/data_0")
-            .exists());
+        assert!(storage.profile_dir(browser, "full/Cache/data_0").exists());
     }
 
     #[test]
@@ -801,7 +894,8 @@ mod tests {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;
         seed(&storage, browser, "work");
-        let outcome = create_backup_unchecked(&storage, browser, "work", false, None, None).unwrap();
+        let outcome =
+            create_backup_unchecked(&storage, browser, "work", false, None, None).unwrap();
 
         assert!(restore_archive_unchecked(&storage, &outcome.path, None, false, None).is_err());
         restore_archive_unchecked(&storage, &outcome.path, None, true, None).unwrap();
@@ -836,9 +930,11 @@ mod tests {
                     assert_eq!(name, "busy");
                     assert_eq!(pid, Some(std::process::id()));
                     let archived_busy = fs::read_dir(backups_dir(&storage))
-                        .map(|entries| entries.flatten().any(|e| {
-                            e.file_name().to_string_lossy().starts_with("chrome-busy-")
-                        }))
+                        .map(|entries| {
+                            entries.flatten().any(|e| {
+                                e.file_name().to_string_lossy().starts_with("chrome-busy-")
+                            })
+                        })
                         .unwrap_or(false);
                     assert!(!archived_busy, "running profile must not be archived");
                 }
@@ -868,7 +964,8 @@ mod tests {
         let browser = Browser::Chrome;
         seed(&storage, browser, "work");
 
-        let outcome = create_backup_unchecked(&storage, browser, "work", false, None, None).unwrap();
+        let outcome =
+            create_backup_unchecked(&storage, browser, "work", false, None, None).unwrap();
         let report = verify_archive(&outcome.path, None).unwrap();
 
         assert_eq!(report.name, "work");
@@ -879,7 +976,10 @@ mod tests {
         );
         assert!(!report.bm_version.is_empty());
         // manifest + Default/Cookies (+ dirs tar-rs records) — at least the manifest.
-        assert!(report.entries >= 2, "expected manifest plus profile entries");
+        assert!(
+            report.entries >= 2,
+            "expected manifest plus profile entries"
+        );
         assert!(report.decoded_bytes > 0);
     }
 
@@ -908,13 +1008,21 @@ mod tests {
         let foreign = truncated.path().join("foreign.tar.zst");
         let mut empty_tar = Vec::new();
         tar::Builder::new(&mut empty_tar).finish().unwrap();
-        fs::write(&foreign, zstd::stream::encode_all(&empty_tar[..], 3).unwrap()).unwrap();
+        fs::write(
+            &foreign,
+            zstd::stream::encode_all(&empty_tar[..], 3).unwrap(),
+        )
+        .unwrap();
         let err = verify_archive(&foreign, None).unwrap_err();
         assert!(err.to_string().contains("not a bm backup"), "got: {err}");
 
         // Valid zstd frame with non-tar garbage inside reports corruption.
         let garbage_tar = truncated.path().join("garbage-inner.tar.zst");
-        fs::write(&garbage_tar, zstd::stream::encode_all(&b"hello"[..], 3).unwrap()).unwrap();
+        fs::write(
+            &garbage_tar,
+            zstd::stream::encode_all(&b"hello"[..], 3).unwrap(),
+        )
+        .unwrap();
         let err = verify_archive(&garbage_tar, None).unwrap_err();
         assert!(err.to_string().contains("corrupt"), "got: {err}");
 
@@ -947,9 +1055,11 @@ mod tests {
 
         let pass = SecretString::from("correct horse battery staple".to_string());
         let outcome =
-            create_backup_unchecked(&storage, browser, "secret", false, None, Some(&pass))
-                .unwrap();
-        assert!(is_encrypted_archive(&outcome.path), "suffix must be .tar.zst.age");
+            create_backup_unchecked(&storage, browser, "secret", false, None, Some(&pass)).unwrap();
+        assert!(
+            is_encrypted_archive(&outcome.path),
+            "suffix must be .tar.zst.age"
+        );
         // The plaintext must not leak into the file.
         let raw = fs::read(&outcome.path).unwrap();
         assert!(
@@ -981,14 +1091,9 @@ mod tests {
         let wrong = SecretString::from("nope".to_string());
         let err = verify_archive(&outcome.path, Some(&wrong)).unwrap_err();
         assert!(err.to_string().contains("wrong passphrase"), "got: {err}");
-        let err = restore_archive_unchecked(
-            &storage,
-            &outcome.path,
-            Some("broken"),
-            false,
-            Some(&wrong),
-        )
-        .unwrap_err();
+        let err =
+            restore_archive_unchecked(&storage, &outcome.path, Some("broken"), false, Some(&wrong))
+                .unwrap_err();
         assert!(err.to_string().contains("wrong passphrase"), "got: {err}");
         assert!(!storage.profile_dir(browser, "broken").exists());
 
@@ -1098,7 +1203,10 @@ mod tests {
         let outcome = create_backup_unchecked(&storage, browser, "work", true, None, None).unwrap();
         restore_archive_unchecked(&storage, &outcome.path, Some("linked"), false, None).unwrap();
         let link = storage.profile_dir(browser, "linked/Default/link");
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(fs::read_link(&link).unwrap(), Path::new("Cookies"));
     }
 }

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use clap::{Parser, Subcommand, ValueEnum};
 use crate::browser::Browser;
+use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// Action for `bm backup --schedule <ACTION>`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -196,6 +196,9 @@ pub enum Commands {
         force: bool,
     },
 
+    /// One-screen overview: active profile, running instances, proxies, backups
+    Status,
+
     /// Audit profile storage health and offer safe repairs
     Doctor {
         /// Apply the safe repairs (dangling symlink removal, metadata backfill)
@@ -242,7 +245,8 @@ pub enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum ProxyAction {    /// Set the egress proxy for a profile
+pub enum ProxyAction {
+    /// Set the egress proxy for a profile
     Set {
         /// Name of the profile
         name: String,

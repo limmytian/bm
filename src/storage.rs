@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 
 use crate::browser::Browser;
 use crate::error::{BmError, Result};
@@ -77,9 +77,8 @@ pub struct StorageManager {
 impl StorageManager {
     /// Initialize StorageManager using ~/.bm as base directory.
     pub fn new() -> Result<Self> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            BmError::Other("Unable to resolve home directory".into())
-        })?;
+        let home = dirs::home_dir()
+            .ok_or_else(|| BmError::Other("Unable to resolve home directory".into()))?;
         let base_dir = home.join(".bm");
         Ok(Self {
             base_dir,
@@ -320,10 +319,7 @@ impl StorageManager {
                     return Ok(Some(name.to_string()));
                 }
             }
-            return Ok(Some(format!(
-                "external ({})",
-                canonical_target.display()
-            )));
+            return Ok(Some(format!("external ({})", canonical_target.display())));
         }
 
         Ok(None)
@@ -681,7 +677,12 @@ impl StorageManager {
     /// preserving created_at. If the renamed profile is the active one and
     /// the browser is running, refuses — the default-data-dir symlink repoint
     /// must not race a live browser (same guard as switch_profile).
-    pub fn rename_profile(&self, old: &str, new: &str, browser: Browser) -> Result<ProfileMetadata> {
+    pub fn rename_profile(
+        &self,
+        old: &str,
+        new: &str,
+        browser: Browser,
+    ) -> Result<ProfileMetadata> {
         if self.get_current_active(browser)?.as_deref() == Some(old) && browser.is_running() {
             return Err(BmError::BrowserRunning {
                 browser: browser.display_name().to_string(),
@@ -781,7 +782,12 @@ fn migrate_registry(mut registry: Registry, from_version: u32) -> Result<Registr
 /// stale or broken — runtime artifacts like SingletonSocket copy as-is);
 /// directory and file permissions are preserved. Sockets/fifos and other
 /// non-regular files are skipped. Returns the number of files copied.
-fn copy_tree(src_dir: &Path, dst_dir: &Path, rel_to_root: &Path, skip_caches: bool) -> Result<usize> {
+fn copy_tree(
+    src_dir: &Path,
+    dst_dir: &Path,
+    rel_to_root: &Path,
+    skip_caches: bool,
+) -> Result<usize> {
     fs::create_dir_all(dst_dir)?;
     #[cfg(unix)]
     {
@@ -827,8 +833,15 @@ mod tests {
     }
 
     /// Build a realistic minimal profile tree: valuable state plus caches.
-    fn seed_profile(storage: &StorageManager, browser: Browser, name: &str, proxy: Option<ProxyConfig>) -> ProfileMetadata {
-        let meta = storage.create_profile(name, Some("source note"), browser).unwrap();
+    fn seed_profile(
+        storage: &StorageManager,
+        browser: Browser,
+        name: &str,
+        proxy: Option<ProxyConfig>,
+    ) -> ProfileMetadata {
+        let meta = storage
+            .create_profile(name, Some("source note"), browser)
+            .unwrap();
         if let Some(p) = proxy {
             storage.set_proxy(name, browser, Some(p)).unwrap();
         }
@@ -842,7 +855,11 @@ mod tests {
         fs::create_dir_all(root.join("Default/GPUCache")).unwrap();
         fs::write(root.join("Default/GPUCache/data_0"), "gpu").unwrap();
         fs::create_dir_all(root.join("Default/Service Worker/CacheStorage")).unwrap();
-        fs::write(root.join("Default/Service Worker/CacheStorage/https_x"), "pwa").unwrap();
+        fs::write(
+            root.join("Default/Service Worker/CacheStorage/https_x"),
+            "pwa",
+        )
+        .unwrap();
         fs::create_dir_all(root.join("component_crx_cache")).unwrap();
         fs::write(root.join("component_crx_cache/x.crx"), "crx").unwrap();
         fs::write(root.join("OptimizationHints"), "hints").unwrap();
@@ -864,16 +881,24 @@ mod tests {
 
         assert!(copied >= 2, "valuable files must be copied");
         let dst_root = storage.profile_dir(browser, "dst");
-        assert_eq!(fs::read_to_string(dst_root.join("Default/Cookies")).unwrap(), "cookie-db");
+        assert_eq!(
+            fs::read_to_string(dst_root.join("Default/Cookies")).unwrap(),
+            "cookie-db"
+        );
         assert!(dst_root.join("Default/Preferences").exists());
         // Symlink recreated as a symlink to the same target.
         let link = dst_root.join("Default/link-cookies");
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert_eq!(fs::read_link(&link).unwrap(), Path::new("Cookies"));
         // Regenerable state absent.
         assert!(!dst_root.join("Cache").exists());
         assert!(!dst_root.join("Default/GPUCache").exists());
-        assert!(!dst_root.join("Default/Service Worker/CacheStorage").exists());
+        assert!(!dst_root
+            .join("Default/Service Worker/CacheStorage")
+            .exists());
         assert!(!dst_root.join("component_crx_cache").exists());
         assert!(!dst_root.join("OptimizationHints").exists());
 
@@ -898,7 +923,9 @@ mod tests {
         let dst_root = storage.profile_dir(browser, "dst");
         assert!(dst_root.join("Cache/data_0").exists());
         assert!(dst_root.join("Default/GPUCache").exists());
-        assert!(dst_root.join("Default/Service Worker/CacheStorage/https_x").exists());
+        assert!(dst_root
+            .join("Default/Service Worker/CacheStorage/https_x")
+            .exists());
         assert!(dst_root.join("OptimizationHints").exists());
     }
 
@@ -923,14 +950,24 @@ mod tests {
         storage.create_profile("taken", None, browser).unwrap();
 
         // Invalid names rejected on either side.
-        assert!(storage.clone_profile_unchecked("bad name", "dst", browser, false, true).is_err());
-        assert!(storage.clone_profile_unchecked("src", "", browser, false, true).is_err());
+        assert!(storage
+            .clone_profile_unchecked("bad name", "dst", browser, false, true)
+            .is_err());
+        assert!(storage
+            .clone_profile_unchecked("src", "", browser, false, true)
+            .is_err());
         // Missing source.
-        assert!(storage.clone_profile_unchecked("nope", "dst", browser, false, true).is_err());
+        assert!(storage
+            .clone_profile_unchecked("nope", "dst", browser, false, true)
+            .is_err());
         // Existing destination.
-        assert!(storage.clone_profile_unchecked("src", "taken", browser, false, true).is_err());
+        assert!(storage
+            .clone_profile_unchecked("src", "taken", browser, false, true)
+            .is_err());
         // Cloning onto itself is caught by the exists guard.
-        assert!(storage.clone_profile_unchecked("src", "src", browser, false, true).is_err());
+        assert!(storage
+            .clone_profile_unchecked("src", "src", browser, false, true)
+            .is_err());
     }
 
     #[test]
@@ -938,7 +975,9 @@ mod tests {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;
         let proxy = ProxyConfig::parse("socks5://10.0.0.1:1080", None).unwrap();
-        let src = storage.create_profile("old", Some("keep me"), browser).unwrap();
+        let src = storage
+            .create_profile("old", Some("keep me"), browser)
+            .unwrap();
         storage.set_proxy("old", browser, Some(proxy)).unwrap();
         fs::create_dir_all(storage.profile_dir(browser, "old/Default")).unwrap();
         fs::write(storage.profile_dir(browser, "old/Default/Cookies"), "db").unwrap();
@@ -951,7 +990,10 @@ mod tests {
         assert!(storage.profile_dir(browser, "new/Default/Cookies").exists());
         assert_eq!(meta.name, "new");
         assert_eq!(meta.description, "keep me");
-        assert_eq!(meta.proxy.as_ref().unwrap().server_string(), "socks5://10.0.0.1:1080");
+        assert_eq!(
+            meta.proxy.as_ref().unwrap().server_string(),
+            "socks5://10.0.0.1:1080"
+        );
         // created_at preserved, updated_at refreshed.
         assert_eq!(meta.created_at, src.created_at);
         assert!(meta.updated_at >= meta.created_at);
@@ -971,19 +1013,28 @@ mod tests {
         storage.create_profile("a", None, browser).unwrap();
         fs::create_dir_all(storage.profile_dir(browser, "a")).unwrap();
         fs::write(storage.profile_dir(browser, "a/marker"), "x").unwrap();
-        symlink(
-            storage.profile_dir(browser, "a"),
-            &default_link,
-        )
-        .unwrap();
+        symlink(storage.profile_dir(browser, "a"), &default_link).unwrap();
 
         storage.rename_profile_unchecked("a", "b", browser).unwrap();
 
         // The global symlink now resolves to the renamed dir.
-        assert!(default_link.symlink_metadata().unwrap().file_type().is_symlink());
-        assert_eq!(fs::read_link(&default_link).unwrap(), storage.profile_dir(browser, "b"));
-        assert_eq!(storage.get_current_active(browser).unwrap().as_deref(), Some("b"));
-        assert_eq!(fs::read_to_string(default_link.join("marker")).unwrap(), "x");
+        assert!(default_link
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_link(&default_link).unwrap(),
+            storage.profile_dir(browser, "b")
+        );
+        assert_eq!(
+            storage.get_current_active(browser).unwrap().as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            fs::read_to_string(default_link.join("marker")).unwrap(),
+            "x"
+        );
     }
 
     #[test]
@@ -994,13 +1045,21 @@ mod tests {
         storage.create_profile("taken", None, browser).unwrap();
 
         // Invalid new name.
-        assert!(storage.rename_profile_unchecked("old", "bad name", browser).is_err());
+        assert!(storage
+            .rename_profile_unchecked("old", "bad name", browser)
+            .is_err());
         // Missing source.
-        assert!(storage.rename_profile_unchecked("nope", "new", browser).is_err());
+        assert!(storage
+            .rename_profile_unchecked("nope", "new", browser)
+            .is_err());
         // Existing destination.
-        assert!(storage.rename_profile_unchecked("old", "taken", browser).is_err());
+        assert!(storage
+            .rename_profile_unchecked("old", "taken", browser)
+            .is_err());
         // Renaming onto itself is caught by the exists guard.
-        assert!(storage.rename_profile_unchecked("old", "old", browser).is_err());
+        assert!(storage
+            .rename_profile_unchecked("old", "old", browser)
+            .is_err());
     }
 
     #[test]
@@ -1019,13 +1078,26 @@ mod tests {
         assert_eq!(reloaded.previous_profile(browser).as_deref(), Some("work"));
 
         // A later switch replaces the previous-profile pointer.
-        storage.record_switch(browser, Some("personal".into())).unwrap();
-        assert_eq!(storage.previous_profile(browser).as_deref(), Some("personal"));
+        storage
+            .record_switch(browser, Some("personal".into()))
+            .unwrap();
+        assert_eq!(
+            storage.previous_profile(browser).as_deref(),
+            Some("personal")
+        );
 
         // Per-browser isolation.
-        storage.record_switch(Browser::Edge, Some("edge-prev".into())).unwrap();
-        assert_eq!(storage.previous_profile(browser).as_deref(), Some("personal"));
-        assert_eq!(storage.previous_profile(Browser::Edge).as_deref(), Some("edge-prev"));
+        storage
+            .record_switch(Browser::Edge, Some("edge-prev".into()))
+            .unwrap();
+        assert_eq!(
+            storage.previous_profile(browser).as_deref(),
+            Some("personal")
+        );
+        assert_eq!(
+            storage.previous_profile(Browser::Edge).as_deref(),
+            Some("edge-prev")
+        );
 
         // A corrupt state file reads as empty instead of crashing.
         fs::write(storage.state_file(), "not json{").unwrap();
@@ -1036,12 +1108,27 @@ mod tests {
     #[test]
     fn relative_time_buckets() {
         let now = Utc::now();
-        assert_eq!(relative_time(now - chrono::Duration::seconds(10), now), "just now");
-        assert_eq!(relative_time(now - chrono::Duration::minutes(5), now), "5m ago");
-        assert_eq!(relative_time(now - chrono::Duration::hours(3), now), "3h ago");
-        assert_eq!(relative_time(now - chrono::Duration::days(12), now), "12d ago");
+        assert_eq!(
+            relative_time(now - chrono::Duration::seconds(10), now),
+            "just now"
+        );
+        assert_eq!(
+            relative_time(now - chrono::Duration::minutes(5), now),
+            "5m ago"
+        );
+        assert_eq!(
+            relative_time(now - chrono::Duration::hours(3), now),
+            "3h ago"
+        );
+        assert_eq!(
+            relative_time(now - chrono::Duration::days(12), now),
+            "12d ago"
+        );
         // Future timestamps clamp instead of going negative.
-        assert_eq!(relative_time(now + chrono::Duration::hours(2), now), "just now");
+        assert_eq!(
+            relative_time(now + chrono::Duration::hours(2), now),
+            "just now"
+        );
     }
 
     /// A metadata.json written before versioning: no schema_version field.
@@ -1074,7 +1161,13 @@ mod tests {
         let before = fs::read_to_string(storage.metadata_file()).unwrap();
 
         let err = storage.load_registry().unwrap_err();
-        assert!(matches!(err, BmError::MetadataVersionTooNew { found: 99, supported: 1 }));
+        assert!(matches!(
+            err,
+            BmError::MetadataVersionTooNew {
+                found: 99,
+                supported: 1
+            }
+        ));
         assert_eq!(fs::read_to_string(storage.metadata_file()).unwrap(), before);
         // The message must tell the user what happened and what to do.
         assert!(err.to_string().contains("upgrade bm"));
@@ -1092,13 +1185,19 @@ mod tests {
     #[test]
     fn save_registry_is_atomic_and_leaves_no_temp_file() {
         let (_tmp, storage) = setup();
-        storage.create_profile("work", None, Browser::Chrome).unwrap();
+        storage
+            .create_profile("work", None, Browser::Chrome)
+            .unwrap();
         let reg = storage.load_registry().unwrap();
         storage.save_registry(&reg).unwrap();
 
         assert!(storage.metadata_file().exists());
         assert!(!storage.base_dir().join("metadata.json.tmp").exists());
         // Reload from disk picks the entry back up.
-        assert!(storage.load_registry().unwrap().profiles.contains_key("chrome:work"));
+        assert!(storage
+            .load_registry()
+            .unwrap()
+            .profiles
+            .contains_key("chrome:work"));
     }
 }

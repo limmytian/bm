@@ -132,7 +132,9 @@ WantedBy=timers.target
 fn shell_join(argv: &[String]) -> String {
     argv.iter()
         .map(|a| {
-            if a.chars().all(|c| c.is_ascii_alphanumeric() || "-_./=:".contains(c)) {
+            if a.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_./=:".contains(c))
+            {
                 a.clone()
             } else {
                 format!("'{}'", a.replace('\'', "'\\''"))
@@ -150,7 +152,9 @@ fn current_exe() -> Result<String> {
         .ok()
         .and_then(|p| p.canonicalize().ok())
         .map(|p| p.display().to_string())
-        .ok_or_else(|| BmError::Other("cannot resolve the bm binary path for the scheduled unit".into()))
+        .ok_or_else(|| {
+            BmError::Other("cannot resolve the bm binary path for the scheduled unit".into())
+        })
 }
 
 // --- platform loaders -------------------------------------------------------
@@ -203,11 +207,18 @@ fn systemctl(args: &[&str]) -> Result<()> {
         .arg("--user")
         .args(args)
         .status()
-        .map_err(|e| BmError::Other(format!("cannot run systemctl (is systemd user session available?): {e}")))?;
+        .map_err(|e| {
+            BmError::Other(format!(
+                "cannot run systemctl (is systemd user session available?): {e}"
+            ))
+        })?;
     if status.success() {
         Ok(())
     } else {
-        Err(BmError::Other(format!("systemctl --user {} failed", args.join(" "))))
+        Err(BmError::Other(format!(
+            "systemctl --user {} failed",
+            args.join(" ")
+        )))
     }
 }
 
@@ -358,7 +369,10 @@ fn uninstall_linux(browser: Browser) -> Result<String> {
             fs::remove_file(&service)?;
         }
         systemctl(&["daemon-reload"])?;
-        Ok(format!("Removed scheduled backup ({}).", unit_name(browser)))
+        Ok(format!(
+            "Removed scheduled backup ({}).",
+            unit_name(browser)
+        ))
     }
 }
 
@@ -449,7 +463,10 @@ mod tests {
         assert!(plist.contains("<string>chrome</string>"));
         // The binary path must be absolute: launchd has no useful PATH.
         let exe_line = plist.lines().find(|l| l.contains("/bm")).unwrap();
-        assert!(exe_line.trim_start().starts_with('<'), "exe embedded as string element");
+        assert!(
+            exe_line.trim_start().starts_with('<'),
+            "exe embedded as string element"
+        );
         assert!(exe_line.contains('/'));
         // Log output is captured, never dropped.
         assert!(plist.contains(&log_path(&storage).display().to_string()));
@@ -472,19 +489,16 @@ mod tests {
     #[test]
     fn shell_join_quotes_only_when_needed() {
         assert_eq!(shell_join(&["bm".into(), "backup".into()]), "bm backup");
-        assert_eq!(
-            shell_join(&["my bm".into()]),
-            "'my bm'"
-        );
-        assert_eq!(
-            shell_join(&["it's".into()]),
-            "'it'\\''s'"
-        );
+        assert_eq!(shell_join(&["my bm".into()]), "'my bm'");
+        assert_eq!(shell_join(&["it's".into()]), "'it'\\''s'");
     }
 
     #[test]
     fn unit_names_are_per_browser() {
-        assert_eq!(unit_name(Browser::Chrome), "io.github.limmytian.bm-backup.chrome");
+        assert_eq!(
+            unit_name(Browser::Chrome),
+            "io.github.limmytian.bm-backup.chrome"
+        );
         assert_ne!(unit_name(Browser::Chrome), unit_name(Browser::Brave));
     }
 }

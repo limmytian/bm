@@ -152,7 +152,8 @@ pub fn import_profile(
         updated_at: now,
         proxy: bundle.proxy,
     };
-    reg.profiles.insert(format!("{browser}:{name}"), meta.clone());
+    reg.profiles
+        .insert(format!("{browser}:{name}"), meta.clone());
     storage.save_registry(&reg)?;
 
     Ok(meta)
@@ -172,9 +173,15 @@ mod tests {
     fn export_writes_a_config_only_bundle() {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;
-        storage.create_profile("work", Some("team standard"), browser).unwrap();
         storage
-            .set_proxy("work", browser, Some(ProxyConfig::parse("socks5://10.0.0.1:1080", Some("localhost")).unwrap()))
+            .create_profile("work", Some("team standard"), browser)
+            .unwrap();
+        storage
+            .set_proxy(
+                "work",
+                browser,
+                Some(ProxyConfig::parse("socks5://10.0.0.1:1080", Some("localhost")).unwrap()),
+            )
             .unwrap();
         // Session data on disk that must NOT travel.
         let root = storage.profile_dir(browser, "work");
@@ -201,7 +208,11 @@ mod tests {
         assert!(!raw.contains("Cookies"));
         // Default location: ~/.bm/exports/bm-export-<name>-<ts>.json
         assert!(out.starts_with(storage.base_dir().join("exports")));
-        assert!(out.file_name().unwrap().to_string_lossy().starts_with("bm-export-work-"));
+        assert!(out
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("bm-export-work-"));
     }
 
     #[test]
@@ -221,9 +232,15 @@ mod tests {
     fn import_registers_placeholder_and_metadata() {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;
-        storage.create_profile("work", Some("team standard"), browser).unwrap();
         storage
-            .set_proxy("work", browser, Some(ProxyConfig::parse("http://p:8080", None).unwrap()))
+            .create_profile("work", Some("team standard"), browser)
+            .unwrap();
+        storage
+            .set_proxy(
+                "work",
+                browser,
+                Some(ProxyConfig::parse("http://p:8080", None).unwrap()),
+            )
             .unwrap();
         let bundle_path = export_profile(&storage, browser, "work", None).unwrap();
 
@@ -264,7 +281,10 @@ mod tests {
         let junk = storage.base_dir().join("junk.json");
         fs::write(&junk, "{ not json").unwrap();
         let err = import_profile(&storage, &junk, None, false).unwrap_err();
-        assert!(err.to_string().contains("not a bm export bundle"), "got: {err}");
+        assert!(
+            err.to_string().contains("not a bm export bundle"),
+            "got: {err}"
+        );
 
         // Future schema version.
         let future = storage.base_dir().join("future.json");
@@ -294,9 +314,15 @@ mod tests {
         let storage_b = StorageManager::with_base_dir(tmp_b.path().join(".bm"));
         let browser = Browser::Brave;
 
-        storage_a.create_profile("shared", Some("docs team"), browser).unwrap();
         storage_a
-            .set_proxy("shared", browser, Some(ProxyConfig::parse("socks5://[::1]:1080", None).unwrap()))
+            .create_profile("shared", Some("docs team"), browser)
+            .unwrap();
+        storage_a
+            .set_proxy(
+                "shared",
+                browser,
+                Some(ProxyConfig::parse("socks5://[::1]:1080", None).unwrap()),
+            )
             .unwrap();
         let bundle_path = export_profile(&storage_a, browser, "shared", None).unwrap();
         // Simulate a cross-machine move: read the bundle text, write it on "machine B".
@@ -306,10 +332,7 @@ mod tests {
 
         let meta = import_profile(&storage_b, &on_b, None, false).unwrap();
         assert_eq!(meta.browser, Browser::Brave);
-        assert_eq!(
-            meta.proxy.unwrap().server_string(),
-            "socks5://[::1]:1080"
-        );
+        assert_eq!(meta.proxy.unwrap().server_string(), "socks5://[::1]:1080");
         assert!(storage_b.proxy_for(browser, "shared").is_some());
     }
 }
