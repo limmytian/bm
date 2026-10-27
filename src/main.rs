@@ -13,6 +13,7 @@ mod schedule;
 mod shortcut;
 mod size;
 mod storage;
+mod transfer;
 
 use std::io::{self, Write};
 use clap::Parser;
@@ -690,6 +691,35 @@ fn run(cli: Cli) -> Result<()> {
             use clap::CommandFactory;
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "bm", &mut std::io::stdout());
+        }
+
+        Commands::Export { name, file } => {
+            let out = transfer::export_profile(&storage, browser, &name, file.as_deref())?;
+            println!(
+                "{} Configuration bundle written to {}",
+                "Success:".green().bold(),
+                out.display().to_string().cyan().bold()
+            );
+            println!("  Config only — no cookies, sessions, or logins. To move actual data between machines, use {} + {}.",
+                "bm backup".green(), "bm restore".green());
+        }
+
+        Commands::Import { file, name, force } => {
+            let meta = transfer::import_profile(&storage, &file, name.as_deref(), force)?;
+            println!(
+                "{} Profile '{}' registered for {} from the bundle.",
+                "Success:".green().bold(),
+                meta.name.bold(),
+                meta.browser.display_name().cyan()
+            );
+            if meta.proxy.is_some() {
+                println!("  Egress proxy restored from the bundle.");
+            }
+            println!(
+                "The profile dir is an empty placeholder — launch it with {} or make it the global default with {}.",
+                format!("bm open {}", meta.name).green(),
+                format!("bm switch {}", meta.name).green()
+            );
         }
 
         Commands::Proxy { action } => match action {

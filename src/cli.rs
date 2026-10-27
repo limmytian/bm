@@ -215,6 +215,30 @@ pub enum Commands {
         #[command(subcommand)]
         action: ProxyAction,
     },
+
+    /// Share a profile's configuration as a small bundle (no session data)
+    Export {
+        /// Profile to export
+        name: String,
+
+        /// Output file (default: ~/.bm/exports/bm-export-<name>-<ts>.json)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Register a profile from an exported configuration bundle
+    Import {
+        /// Path to an export bundle (JSON)
+        file: PathBuf,
+
+        /// Register under a different name than the bundle's
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Re-register over an existing profile (existing data is kept)
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
