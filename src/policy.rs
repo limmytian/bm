@@ -133,10 +133,7 @@ fn apply_policy(
             // Deleting an absent key exits non-zero; that is the normal case
             // when the previous profile had no proxy.
             Ok(_) if deleting => {}
-            Ok(out) => warn_failed(
-                &argv.join(" "),
-                String::from_utf8_lossy(&out.stderr).trim(),
-            ),
+            Ok(out) => warn_failed(&argv.join(" "), String::from_utf8_lossy(&out.stderr).trim()),
             Err(e) => warn_failed(&argv.join(" "), &e.to_string()),
         }
     }
@@ -167,8 +164,8 @@ fn warn_failed(command: &str, detail: &str) {
 /// again afterwards, falling back to the unmodified system entry.
 #[cfg(target_os = "linux")]
 fn sync_linux_desktop(browser: Browser, proxy: Option<&ProxyConfig>) -> Result<()> {
-    use std::fs;
     use crate::shortcut::proxy_launch_flags;
+    use std::fs;
 
     let home = match dirs::home_dir() {
         Some(h) => h,
@@ -195,7 +192,11 @@ fn sync_linux_desktop(browser: Browser, proxy: Option<&ProxyConfig>) -> Result<(
 
             // Test seam: overrides the system desktop-entry search directory.
             let system_content = std::env::var_os("BM_DESKTOP_FILE_DIR")
-                .map(|dir| fs::read_to_string(std::path::PathBuf::from(dir).join(browser.linux_desktop_file())))
+                .map(|dir| {
+                    fs::read_to_string(
+                        std::path::PathBuf::from(dir).join(browser.linux_desktop_file()),
+                    )
+                })
                 .or_else(|| find_system_desktop(browser))
                 .transpose()?
                 .ok_or_else(|| {
@@ -253,7 +254,16 @@ mod tests {
         let p = ProxyConfig::parse("socks5://10.0.0.1:1080", Some("localhost;*.lan")).unwrap();
         let cmds = macos_policy_commands(Some(&p), "com.google.Chrome");
         assert_eq!(cmds.len(), 4);
-        assert_eq!(cmds[0][..], ["write", "com.google.Chrome", "ProxyMode", "-string", "fixed_servers"]);
+        assert_eq!(
+            cmds[0][..],
+            [
+                "write",
+                "com.google.Chrome",
+                "ProxyMode",
+                "-string",
+                "fixed_servers"
+            ]
+        );
         assert_eq!(cmds[1][2], "ProxyServer");
         assert!(cmds[1][4].contains("socks5://10.0.0.1:1080"));
         assert_eq!(cmds[2][2], "ProxyBypassList");
@@ -318,7 +328,9 @@ mod tests {
             assert!(read_key(key).is_none(), "{key} should be removed");
         }
 
-        let _ = Command::new("defaults").args(["delete", "com.bm.test.policy"]).status();
+        let _ = Command::new("defaults")
+            .args(["delete", "com.bm.test.policy"])
+            .status();
     }
 
     #[test]
@@ -327,7 +339,9 @@ mod tests {
         let out = apply_proxy_to_desktop_exec(content, " --proxy-server=\"socks5://h:1\"");
         let execs: Vec<&str> = out.lines().filter(|l| l.starts_with("Exec=")).collect();
         assert_eq!(execs.len(), 2);
-        assert!(execs.iter().all(|l| l.ends_with("--proxy-server=\"socks5://h:1\"")));
+        assert!(execs
+            .iter()
+            .all(|l| l.ends_with("--proxy-server=\"socks5://h:1\"")));
         assert!(out.starts_with("[Desktop Entry]\nName=Chrome\n"));
         assert!(out.ends_with('\n'));
         // Non-Exec lines untouched

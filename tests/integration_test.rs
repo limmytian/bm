@@ -92,7 +92,8 @@ fn test_brave_and_chromium_data_dirs() {
     // or ~/.config/chromium (Linux).
     let chromium = Browser::Chromium.default_data_dir().unwrap();
     assert!(
-        chromium.ends_with("Application Support/Chromium") || chromium.ends_with(".config/chromium"),
+        chromium.ends_with("Application Support/Chromium")
+            || chromium.ends_with(".config/chromium"),
         "unexpected Chromium data dir: {}",
         chromium.display()
     );
@@ -133,15 +134,26 @@ fn test_proxy_persistence_and_backward_compatibility() {
 
     // Set proxy on one profile; the other stays proxy-free.
     let cfg = ProxyConfig::parse("socks5://10.0.0.1:1080", Some("localhost;*.lan")).unwrap();
-    let updated = storage.set_proxy("work", browser, Some(cfg.clone())).unwrap();
+    let updated = storage
+        .set_proxy("work", browser, Some(cfg.clone()))
+        .unwrap();
     assert_eq!(updated.proxy, Some(cfg.clone()));
-    assert_eq!(storage.set_proxy("personal", browser, None).unwrap().proxy, None);
+    assert_eq!(
+        storage.set_proxy("personal", browser, None).unwrap().proxy,
+        None
+    );
 
     // Re-load from disk: proxy survives the roundtrip.
     let list = storage.list_profiles(browser).unwrap();
     let work = list.iter().find(|(m, _)| m.name == "work").unwrap();
-    assert_eq!(work.0.proxy.as_ref().unwrap().server_string(), "socks5://10.0.0.1:1080");
-    assert_eq!(work.0.proxy.as_ref().unwrap().bypass_string().unwrap(), "localhost,*.lan");
+    assert_eq!(
+        work.0.proxy.as_ref().unwrap().server_string(),
+        "socks5://10.0.0.1:1080"
+    );
+    assert_eq!(
+        work.0.proxy.as_ref().unwrap().bypass_string().unwrap(),
+        "localhost,*.lan"
+    );
 
     // Clearing works too.
     let cleared = storage.set_proxy("work", browser, None).unwrap();
@@ -166,7 +178,10 @@ fn test_proxy_persistence_and_backward_compatibility() {
     let storage2 = StorageManager::with_base_dir(tmp2.path().join(".bm2"));
     std::fs::create_dir_all(storage2.profile_dir(browser, "orphandir")).unwrap();
     let orphan = storage2.set_proxy("orphandir", browser, Some(cfg)).unwrap();
-    assert_eq!(orphan.proxy.as_ref().unwrap().server_string(), "socks5://10.0.0.1:1080");
+    assert_eq!(
+        orphan.proxy.as_ref().unwrap().server_string(),
+        "socks5://10.0.0.1:1080"
+    );
 }
 
 #[test]
@@ -186,7 +201,9 @@ fn test_proxy_lookup_helper() {
 
     let cfg = ProxyConfig::parse("socks5://10.0.0.1:1080", None).unwrap();
     storage.create_profile("work", None, browser).unwrap();
-    storage.set_proxy("work", browser, Some(cfg.clone())).unwrap();
+    storage
+        .set_proxy("work", browser, Some(cfg.clone()))
+        .unwrap();
     assert_eq!(storage.proxy_for(browser, "work"), Some(cfg));
 
     // Clearing the proxy is reflected in the lookup.

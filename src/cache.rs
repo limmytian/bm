@@ -76,11 +76,9 @@ pub fn is_regenerable(relative_path: &Path) -> bool {
             return true;
         }
     }
-    components.iter().any(|name| {
-        REGENERABLE_PREFIXES
-            .iter()
-            .any(|p| name.starts_with(p))
-    })
+    components
+        .iter()
+        .any(|name| REGENERABLE_PREFIXES.iter().any(|p| name.starts_with(p)))
 }
 
 #[cfg(test)]
@@ -89,7 +87,15 @@ mod tests {
 
     #[test]
     fn root_level_cache_dirs_match() {
-        for name in ["Cache", "Code Cache", "Crashpad", "component_crx_cache", "extensions_crx_cache", "GPUPersistentCache", "GraphiteDawnCache"] {
+        for name in [
+            "Cache",
+            "Code Cache",
+            "Crashpad",
+            "component_crx_cache",
+            "extensions_crx_cache",
+            "GPUPersistentCache",
+            "GraphiteDawnCache",
+        ] {
             assert!(is_regenerable(Path::new(name)), "{name} should match");
         }
     }
@@ -102,7 +108,9 @@ mod tests {
         assert!(is_regenerable(Path::new("Profile 1/DawnWebGPUCache")));
         assert!(is_regenerable(Path::new("System Profile/Media Cache")));
         // Multi-component entry matches as a path suffix at any depth.
-        assert!(is_regenerable(Path::new("Default/Service Worker/CacheStorage")));
+        assert!(is_regenerable(Path::new(
+            "Default/Service Worker/CacheStorage"
+        )));
         assert!(is_regenerable(Path::new(
             "Default/Service Worker/CacheStorage/https_example.com"
         )));

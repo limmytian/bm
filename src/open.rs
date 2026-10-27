@@ -88,9 +88,9 @@ mod tests {
         let args = launch_args(Path::new("/tmp/prof"), Some(&p), &[]);
         assert!(args.contains(&"--proxy-server=http://proxy.corp:8080".to_string()));
         assert!(args.contains(&"--proxy-bypass-list=localhost,*.lan".to_string()));
-        assert!(args.contains(
-            &"--force-webrtc-ip-handling-policy=disable_non_proxied_udp".to_string()
-        ));
+        assert!(
+            args.contains(&"--force-webrtc-ip-handling-policy=disable_non_proxied_udp".to_string())
+        );
         // Quoting is a shell concern; direct spawns must not carry it.
         assert!(args.iter().all(|a| !a.contains('"')));
     }
@@ -99,9 +99,9 @@ mod tests {
     fn socks5_dns_pin_stays_single_arg() {
         let p = ProxyConfig::parse("socks5://127.0.0.1:1080", None).unwrap();
         let args = launch_args(Path::new("/tmp/prof"), Some(&p), &[]);
-        assert!(args.contains(
-            &"--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1".to_string()
-        ));
+        assert!(
+            args.contains(&"--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1".to_string())
+        );
     }
 
     #[test]
@@ -112,9 +112,6 @@ mod tests {
         ];
         let args = launch_args(Path::new("/tmp/prof"), None, &urls);
         assert_eq!(&args[..2], &["--user-data-dir=/tmp/prof", "--no-first-run"]);
-        assert_eq!(
-            &args[2..],
-            &["https://example.com", "https://example.org"]
-        );
+        assert_eq!(&args[2..], &["https://example.com", "https://example.org"]);
     }
 }

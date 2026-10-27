@@ -108,9 +108,22 @@ impl ShortcutGenerator {
         let proxy = storage.proxy_for(browser, profile_name);
 
         if cfg!(target_os = "macos") {
-            Self::create_macos_app_bundle(browser, profile_name, &profile_dir, proxy.as_ref(), dest_dir)
+            Self::create_macos_app_bundle(
+                browser,
+                profile_name,
+                &profile_dir,
+                proxy.as_ref(),
+                dest_dir,
+            )
         } else {
-            Self::create_linux_script(storage, browser, profile_name, &profile_dir, proxy.as_ref(), dest_dir)
+            Self::create_linux_script(
+                storage,
+                browser,
+                profile_name,
+                &profile_dir,
+                proxy.as_ref(),
+                dest_dir,
+            )
         }
     }
 
@@ -122,9 +135,8 @@ impl ShortcutGenerator {
         proxy: Option<&ProxyConfig>,
         dest_dir: Option<&Path>,
     ) -> Result<PathBuf> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            BmError::Other("Unable to resolve home directory".into())
-        })?;
+        let home = dirs::home_dir()
+            .ok_or_else(|| BmError::Other("Unable to resolve home directory".into()))?;
 
         let target_parent = match dest_dir {
             Some(p) => p.to_path_buf(),
@@ -247,7 +259,8 @@ impl ShortcutGenerator {
         if let Some(home) = dirs::home_dir() {
             let apps_dir = home.join(".local/share/applications");
             if fs::create_dir_all(&apps_dir).is_ok() {
-                let desktop_file = apps_dir.join(format!("bm-{}-{}.desktop", browser, profile_name));
+                let desktop_file =
+                    apps_dir.join(format!("bm-{}-{}.desktop", browser, profile_name));
                 let display_browser = browser.display_name();
                 let icon_name = match browser {
                     Browser::Chrome => "google-chrome",
@@ -494,9 +507,8 @@ mod tests {
         storage
             .rename_profile_unchecked("old", "new", browser)
             .unwrap();
-        let regen =
-            ShortcutGenerator::regenerate_stale_shortcuts(&storage, browser, &stale, "new")
-                .unwrap();
+        let regen = ShortcutGenerator::regenerate_stale_shortcuts(&storage, browser, &stale, "new")
+            .unwrap();
         assert_eq!(regen.len(), 1);
         assert!(!script.exists());
         assert!(regen[0].exists());
@@ -508,6 +520,11 @@ mod tests {
         } else {
             fs::read_to_string(artifact).unwrap()
         };
-        assert!(content.contains(&storage.profile_dir(browser, "new").to_string_lossy().to_string()));
+        assert!(content.contains(
+            &storage
+                .profile_dir(browser, "new")
+                .to_string_lossy()
+                .to_string()
+        ));
     }
 }

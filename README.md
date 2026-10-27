@@ -190,6 +190,13 @@ bm backup --schedule uninstall
 ```
 The schedule refuses to install twice; logs go to `~/.bm/backup.log` (launchd) or `journalctl --user -u bm-backup-<browser>` (systemd). Test the unit manually with `bm backup --all --keep 7` — that is exactly the command the timer runs.
 
+### Status At A Glance
+One read-only command that answers "what is bm doing right now?" for the selected browser — no browser launch, fast enough to alias:
+```bash
+bm status
+```
+Shows the active profile (including external/unmanaged activations), which profiles have a live browser process and its pid (via the Chromium `SingletonLock`), each profile's egress proxy, the newest backup per profile (timestamp, size, `age` marker when encrypted), and any open `bm doctor` findings with severity.
+
 ### Health Audit
 Audit the bm-managed state for common problems — dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:
 ```bash

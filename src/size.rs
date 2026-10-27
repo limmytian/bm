@@ -136,7 +136,11 @@ mod tests {
         fs::create_dir_all(root.join("Default/GPUCache")).unwrap();
         fs::write(root.join("Default/GPUCache/blob"), vec![0u8; 2000]).unwrap();
         fs::create_dir_all(root.join("Default/Service Worker/CacheStorage")).unwrap();
-        fs::write(root.join("Default/Service Worker/CacheStorage/x"), vec![0u8; 8000]).unwrap();
+        fs::write(
+            root.join("Default/Service Worker/CacheStorage/x"),
+            vec![0u8; 8000],
+        )
+        .unwrap();
         fs::write(root.join("OptimizationHints"), vec![0u8; 1000]).unwrap();
         // Deeper cache content must be counted with its boundary entry.
         fs::create_dir_all(root.join("Cache/Cache_Data")).unwrap();
@@ -187,7 +191,10 @@ mod tests {
 
         assert!(!tmp.path().join("Cache").exists());
         assert!(!tmp.path().join("Default/GPUCache").exists());
-        assert!(!tmp.path().join("Default/Service Worker/CacheStorage").exists());
+        assert!(!tmp
+            .path()
+            .join("Default/Service Worker/CacheStorage")
+            .exists());
         assert!(!tmp.path().join("OptimizationHints").exists());
         // Core data untouched, including the now-empty Service Worker parent.
         assert!(tmp.path().join("Default/Cookies").exists());

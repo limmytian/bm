@@ -1,8 +1,8 @@
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
-use clap::ValueEnum;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{BmError, Result};
 
@@ -72,7 +72,9 @@ impl Browser {
             match self {
                 Browser::Chrome => Ok(home.join("Library/Application Support/Google/Chrome")),
                 Browser::Edge => Ok(home.join("Library/Application Support/Microsoft Edge")),
-                Browser::Brave => Ok(home.join("Library/Application Support/BraveSoftware/Brave-Browser")),
+                Browser::Brave => {
+                    Ok(home.join("Library/Application Support/BraveSoftware/Brave-Browser"))
+                }
                 Browser::Chromium => Ok(home.join("Library/Application Support/Chromium")),
             }
         } else if cfg!(target_os = "linux") {
@@ -180,10 +182,7 @@ impl Browser {
             }
         };
 
-        let output = Command::new("pgrep")
-            .arg("-f")
-            .arg(process_name)
-            .output();
+        let output = Command::new("pgrep").arg("-f").arg(process_name).output();
 
         match output {
             Ok(out) => out.status.success() && !out.stdout.is_empty(),
@@ -225,18 +224,13 @@ impl Browser {
         };
 
         // Try pkill -f first (standard across macOS and modern Linux)
-        let status = Command::new("pkill")
-            .arg("-f")
-            .arg(process_name)
-            .status();
+        let status = Command::new("pkill").arg("-f").arg(process_name).status();
 
         match status {
             Ok(_) => Ok(()),
             Err(_) => {
                 // Fallback to killall if pkill is absent
-                let _ = Command::new("killall")
-                    .arg(process_name)
-                    .status();
+                let _ = Command::new("killall").arg(process_name).status();
                 Ok(())
             }
         }
