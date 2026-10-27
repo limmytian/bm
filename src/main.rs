@@ -336,14 +336,44 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
 
-            Commands::Open { name, urls } => {
-                OpenLauncher::launch(&storage, browser, &name, &urls)?;
-                println!(
-                    "{} Launched {} profile '{}' — global default profile unchanged.",
-                    "Success:".green().bold(),
-                    browser.display_name().cyan(),
-                    name.bold()
-                );
+            Commands::Open { name, rest } => {
+                let (profiles, urls) = crate::open::split_open_args(name, rest);
+                let outcomes = OpenLauncher::launch_all(&storage, browser, &profiles, &urls)?;
+                let failures: Vec<&crate::open::OpenOutcome> =
+                    outcomes.iter().filter(|o| o.error.is_some()).collect();
+
+                if outcomes.len() == 1 && failures.is_empty() {
+                    println!(
+                        "{} Launched {} profile '{}' — global default profile unchanged.",
+                        "Success:".green().bold(),
+                        browser.display_name().cyan(),
+                        outcomes[0].profile.bold()
+                    );
+                } else {
+                    for outcome in &outcomes {
+                        match &outcome.error {
+                            None => println!(
+                                "{} '{}' launched (own user-data-dir, global default unchanged).",
+                                "ok".green().bold(),
+                                outcome.profile.bold()
+                            ),
+                            Some(err) => println!(
+                                "{} '{}' — {}",
+                                "fail".red().bold(),
+                                outcome.profile.bold(),
+                                err
+                            ),
+                        }
+                    }
+                    println!(
+                        "{} Launched {} profile(s) side by side.",
+                        "Summary:".bold(),
+                        outcomes.len() - failures.len()
+                    );
+                }
+                if !failures.is_empty() {
+                    std::process::exit(1);
+                }
             }
 
             Commands::Size { name, json } => {

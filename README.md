@@ -135,8 +135,11 @@ Launch the browser directly against a profile with its proxy flags, without touc
 ```bash
 bm open work
 bm open personal --browser edge https://github.com https://news.ycombinator.com
+bm open work personal guest          # multi-account: three profiles side by side
+bm open work personal https://gmail.com   # same URLs for every launched profile
 ```
-* The CLI returns immediately; the profile's egress proxy is applied automatically.
+* The CLI returns immediately; each profile's egress proxy is applied automatically.
+* **Multi-profile grammar**: the first token is always a profile name; every token after it that is a *valid profile name* launches as another profile, and anything else (contains `.`, `:`, `/`, …) opens as a URL in all launched profiles. This keeps `bm open <name> [urls...]` fully back-compatible. Per-profile launch results are reported; a missing profile is reported and the run exits non-zero.
 * Running browser instances are fine: a distinct profile directory runs side by side. Re-running `bm open <name> <url>` hands the URLs to that profile's running instance.
 
 ### Show Disk Usage (Cache vs Core)

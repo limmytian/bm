@@ -117,13 +117,16 @@ pub enum Commands {
         dest: Option<PathBuf>,
     },
 
-    /// Launch a profile ad-hoc without switching the global default profile
+    /// Launch profiles ad-hoc without switching the global default profile
+    /// (multiple names launch side by side)
     Open {
-        /// Name of the profile to launch
+        /// Name of the profile to launch (first of possibly several)
         name: String,
 
-        /// Optional URLs to open in the launched browser
-        urls: Vec<String>,
+        /// More profile names and/or URLs: tokens that are valid profile
+        /// names launch as profiles, the rest open as URLs
+        #[arg(value_name = "PROFILE|URL")]
+        rest: Vec<String>,
     },
 
     /// Show per-profile disk usage (cache vs core data)

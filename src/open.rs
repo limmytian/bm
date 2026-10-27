@@ -9,49 +9,89 @@ use crate::storage::StorageManager;
 
 pub struct OpenLauncher;
 
+/// One profile's launch result in a multi-profile run.
+#[derive(Debug)]
+pub struct OpenOutcome {
+    pub profile: String,
+    /// None on success; the error text otherwise.
+    pub error: Option<String>,
+}
+
+/// Classify `bm open` tokens: the first token is always a profile name;
+/// every token after it that is a *valid profile name* launches as another
+/// profile, everything else opens as a URL. This keeps the historical
+/// single-profile form byte-compatible (`bm open work https://x.com`,
+/// `bm open work example.com` — URLs never pass name validation, profile
+/// names cannot contain `: / .`) while making `bm open a b c` launch three
+/// profiles. `--` stays available as clap's verbatim escape for odd tokens.
+pub fn split_open_args(first: String, rest: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut profiles = vec![first];
+    let mut urls = Vec::new();
+    for token in rest {
+        if StorageManager::validate_name(&token).is_ok() {
+            profiles.push(token);
+        } else {
+            urls.push(token);
+        }
+    }
+    (profiles, urls)
+}
+
 impl OpenLauncher {
-    /// Launch the browser directly against a profile dir, without switching
-    /// the global default-data-dir symlink and without creating any .app or
-    /// .desktop artifact — the no-ceremony counterpart to `bm shortcut`.
-    /// The child is spawned detached with nulled stdio so the CLI returns
-    /// immediately; a distinct user-data-dir runs side by side with any
-    /// already-running browser instance.
-    pub fn launch(
+    /// Launch several profiles side by side, each with its own user-data-dir
+    /// and proxy flags, sharing `urls`. Every profile is attempted
+    /// independently — a missing profile or failed spawn is reported in its
+    /// outcome instead of aborting the rest. Single-profile launches are the
+    /// one-element case: the child is spawned detached with nulled stdio so
+    /// the CLI returns immediately, and a distinct user-data-dir runs side
+    /// by side with any already-running browser instance (the no-ceremony
+    /// counterpart to `bm shortcut`, without switching the global symlink).
+    pub fn launch_all(
         storage: &StorageManager,
         browser: Browser,
-        profile_name: &str,
+        profiles: &[String],
         urls: &[String],
-    ) -> Result<()> {
-        let profile_dir = storage.profile_dir(browser, profile_name);
-        if !profile_dir.exists() {
-            return Err(BmError::ProfileNotFound {
-                name: profile_name.to_string(),
-                browser: browser.display_name().to_string(),
+    ) -> Result<Vec<OpenOutcome>> {
+        let binary = browser.binary_path()?;
+        let mut outcomes = Vec::new();
+        for profile in profiles {
+            let profile_dir = storage.profile_dir(browser, profile);
+            let error = if !profile_dir.exists() {
+                Some(
+                    BmError::ProfileNotFound {
+                        name: profile.clone(),
+                        browser: browser.display_name().to_string(),
+                    }
+                    .to_string(),
+                )
+            } else {
+                let args = launch_args(
+                    &profile_dir,
+                    storage.proxy_for(browser, profile).as_ref(),
+                    urls,
+                );
+                Command::new(&binary)
+                    .args(&args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .err()
+                    .map(|e| {
+                        BmError::Other(format!(
+                            "Failed to launch {} ({}): {e}. Is the browser installed?",
+                            browser.display_name(),
+                            binary.display()
+                        ))
+                        .to_string()
+                    })
+            };
+            outcomes.push(OpenOutcome {
+                profile: profile.clone(),
+                error,
             });
         }
-
-        let binary = browser.binary_path()?;
-        let args = launch_args(
-            &profile_dir,
-            storage.proxy_for(browser, profile_name).as_ref(),
-            urls,
-        );
-
-        Command::new(&binary)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| {
-                BmError::Other(format!(
-                    "Failed to launch {} ({}): {e}. Is the browser installed?",
-                    browser.display_name(),
-                    binary.display()
-                ))
-            })?;
-
-        Ok(())
+        Ok(outcomes)
     }
 }
 
@@ -113,5 +153,41 @@ mod tests {
         let args = launch_args(Path::new("/tmp/prof"), None, &urls);
         assert_eq!(&args[..2], &["--user-data-dir=/tmp/prof", "--no-first-run"]);
         assert_eq!(&args[2..], &["https://example.com", "https://example.org"]);
+    }
+
+    #[test]
+    fn multi_profile_grammar_classifies_by_name_validity() {
+        // The requirement's headline syntax: bare names launch side by side.
+        let (profiles, urls) = split_open_args("a".into(), vec!["b".into(), "c".into()]);
+        assert_eq!(profiles, vec!["a", "b", "c"]);
+        assert!(urls.is_empty());
+
+        // Historical single-profile forms: everything that cannot be a
+        // profile name stays a URL.
+        let (profiles, urls) =
+            split_open_args("work".into(), vec!["https://x.com".into(), "example.com".into()]);
+        assert_eq!(profiles, vec!["work"]);
+        assert_eq!(urls, vec!["https://x.com", "example.com"]);
+
+        // Mixed: names and URLs interleaved.
+        let (profiles, urls) = split_open_args(
+            "work".into(),
+            vec![
+                "https://x.com".into(),
+                "personal".into(),
+                "localhost:3000".into(),
+            ],
+        );
+        assert_eq!(profiles, vec!["work", "personal"]);
+        assert_eq!(urls, vec!["https://x.com", "localhost:3000"]);
+
+        // Names with underscore/dash/digits still classify as profiles.
+        let (profiles, _) = split_open_args("team_1".into(), vec!["old-acct".into(), "2026".into()]);
+        assert_eq!(profiles, vec!["team_1", "old-acct", "2026"]);
+
+        // Empty rest: plain single profile.
+        let (profiles, urls) = split_open_args("solo".into(), vec![]);
+        assert_eq!(profiles, vec!["solo"]);
+        assert!(urls.is_empty());
     }
 }
