@@ -432,7 +432,8 @@ fn status_linux(browser: Browser) -> Result<String> {
             .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
             .unwrap_or_else(|_| "unknown".into());
         Ok(format!(
-            "installed ({timer}), timer {enabled}; logs: journalctl --user -u {}",
+            "installed ({}), timer {enabled}; logs: journalctl --user -u {}",
+            timer.display(),
             unit_name(browser)
         ))
     }
