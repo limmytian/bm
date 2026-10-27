@@ -92,7 +92,7 @@ fn test_brave_and_chromium_data_dirs() {
     // or ~/.config/chromium (Linux).
     let chromium = Browser::Chromium.default_data_dir().unwrap();
     assert!(
-        chromium.ends_with("Application Support/Chromium") || chromium.ends_with("config/chromium"),
+        chromium.ends_with("Application Support/Chromium") || chromium.ends_with(".config/chromium"),
         "unexpected Chromium data dir: {}",
         chromium.display()
     );
