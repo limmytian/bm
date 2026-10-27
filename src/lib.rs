@@ -5,6 +5,7 @@ pub mod cdp;
 pub mod cli;
 pub mod doctor;
 pub mod error;
+pub mod mcp;
 pub mod open;
 pub mod policy;
 pub mod proxy;

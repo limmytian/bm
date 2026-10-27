@@ -239,6 +239,9 @@ pub enum Commands {
     #[command(hide = true)]
     Manpage,
 
+    /// Run the built-in stdio MCP server (agent tool interface)
+    Mcp,
+
     /// Manage CDP endpoints created with `bm open --cdp`
     Cdp {
         #[command(subcommand)]

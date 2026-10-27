@@ -5,6 +5,7 @@ mod cdp;
 mod cli;
 mod doctor;
 mod error;
+mod mcp;
 mod open;
 mod policy;
 mod proxy;
@@ -817,6 +818,17 @@ fn run(cli: Cli) -> Result<()> {
                 use clap::CommandFactory;
                 let mut cmd = Cli::command();
                 clap_complete::generate(shell, &mut cmd, "bm", &mut std::io::stdout());
+            }
+
+            Commands::Mcp => {
+                // stdio MCP server: stdout is protocol-only from here on.
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| {
+                        crate::error::BmError::Other(format!("cannot start async runtime: {e}"))
+                    })?;
+                rt.block_on(crate::mcp::serve(cli.browser))?;
             }
 
             Commands::Manpage => {

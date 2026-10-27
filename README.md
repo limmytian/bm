@@ -276,6 +276,21 @@ bm delete old-profile
 bm delete test-profile --yes   # Skip confirmation prompt
 ```
 
+### Built-in MCP Server (`bm mcp`)
+`bm mcp` runs a Model Context Protocol server over stdio (v1 transport), giving agent hosts schema-driven access to bm without shell access. It is a thin wrapper over the same modules the CLI uses — the running-browser and active-profile guards apply unchanged — and returns the same JSON shapes documented in docs/json.md.
+
+Tools: `list_profiles`, `current`, `status`, `open_profile` (name, browser, urls, `cdp` — CDP stays strictly opt-in per call), `switch` (force), `proxy_get`, `proxy_set`, `proxy_clear`, `backup`. No destructive tools (delete is deliberately not exposed).
+
+Register it in your MCP host config:
+```json
+{
+  "mcpServers": {
+    "bm": { "command": "bm", "args": ["mcp"] }
+  }
+}
+```
+This snippet works for Claude Desktop (`claude_desktop_config.json`), Cursor (`mcp.json`), and ZCode. For Task Weaver: `tw mcp register-local bm -- bm mcp`. stdout carries only JSON-RPC frames; warnings go to stderr.
+
 ### Scriptable JSON Output
 `bm --json` gives every read-oriented command a stable, documented JSON form (human output is untouched): `list`, `current`, `doctor`, `proxy show`, `status`, and `size`. The shapes are pinned by golden tests and versioned in [docs/json.md](docs/json.md) — external tooling and `bm mcp` (v1) rely on them verbatim:
 ```bash
