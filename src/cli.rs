@@ -28,6 +28,11 @@ pub struct Cli {
     /// Target browser (chrome, edge, brave, or chromium)
     #[arg(short, long, global = true, value_enum, default_value_t = Browser::Chrome)]
     pub browser: Browser,
+
+    /// Emit machine-readable JSON (list, current, doctor, proxy show,
+    /// status, size; schemas documented in docs/json.md)
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -133,10 +138,6 @@ pub enum Commands {
     Size {
         /// Optional profile name; omit to summarize every profile
         name: Option<String>,
-
-        /// Emit machine-readable JSON
-        #[arg(long)]
-        json: bool,
     },
 
     /// Delete regenerable caches from profiles to reclaim disk space

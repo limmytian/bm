@@ -8,6 +8,7 @@ pub mod open;
 pub mod policy;
 pub mod proxy;
 pub mod proxy_test;
+pub mod report;
 pub mod running;
 pub mod schedule;
 pub mod shortcut;

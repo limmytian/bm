@@ -8,6 +8,7 @@ mod open;
 mod policy;
 mod proxy;
 mod proxy_test;
+mod report;
 mod running;
 mod schedule;
 mod shortcut;
@@ -61,6 +62,10 @@ fn run(cli: Cli) -> Result<()> {
 
         Some(command) => match command {
             Commands::List => {
+                if cli.json {
+                    print_json(&crate::report::list_json(&storage, browser)?)?;
+                    return Ok(());
+                }
                 let profiles = storage.list_profiles(browser)?;
                 let active_opt = storage.get_current_active(browser)?;
 
@@ -140,6 +145,10 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             Commands::Current => {
+                if cli.json {
+                    print_json(&crate::report::current_json(&storage, browser)?)?;
+                    return Ok(());
+                }
                 let active = storage.get_current_active(browser)?;
                 match active {
                     Some(name) => {
@@ -376,7 +385,7 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
 
-            Commands::Size { name, json } => {
+            Commands::Size { name } => {
                 let names: Vec<String> = match &name {
                     Some(name) => {
                         if !storage.profile_dir(browser, name).exists() {
@@ -394,7 +403,7 @@ fn run(cli: Cli) -> Result<()> {
                         .collect(),
                 };
 
-                if json {
+                if cli.json {
                     let entries: Vec<serde_json::Value> = names
                         .iter()
                         .map(|n| {
@@ -710,6 +719,10 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             Commands::Status => {
+                if cli.json {
+                    print_json(&crate::report::status_json(&storage, browser)?)?;
+                    return Ok(());
+                }
                 let report = collect_status(&storage, browser)?;
                 print!("{}", render_status(&report));
             }
@@ -717,6 +730,10 @@ fn run(cli: Cli) -> Result<()> {
             Commands::Doctor { fix } => {
                 use crate::doctor::{apply_fixes, run_checks};
 
+                if cli.json {
+                    print_json(&crate::report::doctor_json(&storage, browser, fix)?)?;
+                    return Ok(());
+                }
                 let issues = run_checks(&storage, browser)?;
                 if issues.is_empty() {
                     println!(
@@ -828,6 +845,14 @@ fn run(cli: Cli) -> Result<()> {
                 }
 
                 ProxyAction::Show { name } => {
+                    if cli.json {
+                        print_json(&crate::report::proxy_json(
+                            &storage,
+                            browser,
+                            name.as_deref(),
+                        )?)?;
+                        return Ok(());
+                    }
                     let profiles = storage.list_profiles(browser)?;
                     match name {
                         Some(name) => {
@@ -1076,6 +1101,13 @@ fn pick_profile(storage: &StorageManager, browser: Browser) -> Result<Option<Str
         ) => Ok(None),
         Err(e) => Err(BmError::Other(format!("profile picker failed: {e}"))),
     }
+}
+
+/// Pretty-print a JSON value for `--json` consumers (single trailing
+/// newline; nothing else may pollute stdout).
+fn print_json(value: &serde_json::Value) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
 }
 
 /// Shared hints after `bm proxy set/clear`.

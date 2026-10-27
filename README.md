@@ -239,6 +239,13 @@ bm delete old-profile
 bm delete test-profile --yes   # Skip confirmation prompt
 ```
 
+### Scriptable JSON Output
+`bm --json` gives every read-oriented command a stable, documented JSON form (human output is untouched): `list`, `current`, `doctor`, `proxy show`, `status`, and `size`. The shapes are pinned by golden tests and versioned in [docs/json.md](docs/json.md) — external tooling and `bm mcp` (v1) rely on them verbatim:
+```bash
+bm --json status | jq '.profiles[] | select(.running) | .name'
+bm --json list --browser edge | jq '.profiles[].name'
+```
+
 ### Shell Completions
 Generate completions from the live CLI definition (stays in sync with every subcommand and flag):
 ```bash
