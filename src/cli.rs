@@ -139,18 +139,27 @@ pub enum Commands {
         dry_run: bool,
     },
 
-    /// Create a local snapshot of a profile (tar+zstd, caches excluded)
+    /// Create a local snapshot of a profile (tar+zstd, caches excluded), or
+    /// verify/restore an existing snapshot
     Backup {
-        /// Profile to back up
-        name: String,
+        /// Profile to back up; required unless --all or a mode flag is given
+        name: Option<String>,
+
+        /// Back up every profile of the selected browser (running profiles are skipped)
+        #[arg(long)]
+        all: bool,
 
         /// Include regenerable caches (skipped by default)
         #[arg(long)]
         full: bool,
 
-        /// Keep only the N newest backups of this profile (default: keep all)
+        /// Keep only the N newest backups per profile (default: keep all)
         #[arg(long)]
         keep: Option<usize>,
+
+        /// Validate a snapshot archive without extracting it
+        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["all", "full", "keep"])]
+        verify: Option<PathBuf>,
     },
 
     /// Restore a profile snapshot created by bm backup

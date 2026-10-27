@@ -9,7 +9,7 @@
 
 use std::collections::hash_map::Entry;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -41,6 +41,45 @@ pub struct BackupOutcome {
     pub profile_bytes: u64,
     /// Number of older archives removed by `--keep`.
     pub pruned: usize,
+}
+
+/// One row of a `bm backup --all` run.
+#[derive(Debug)]
+pub enum AllBackupOutcome {
+    BackedUp { name: String, outcome: BackupOutcome },
+    /// Profile skipped because a live browser process holds it.
+    SkippedRunning { name: String, pid: Option<u32> },
+    /// Profile failed; the run continues with the remaining profiles.
+    Failed { name: String, error: String },
+}
+
+/// Snapshot every profile of `browser`, skipping profiles held by a running
+/// browser process (reported, not fatal). Per-profile failures do not abort
+/// the run; the caller decides the exit code from the outcome mix.
+pub fn create_backup_all(
+    storage: &StorageManager,
+    browser: Browser,
+    full: bool,
+    keep: Option<usize>,
+) -> Result<Vec<AllBackupOutcome>> {
+    let profiles: Vec<String> = storage
+        .list_profiles(browser)?
+        .into_iter()
+        .map(|(m, _)| m.name)
+        .collect();
+    let mut outcomes = Vec::new();
+    for name in profiles {
+        let dir = storage.profile_dir(browser, &name);
+        if let Some(pid) = crate::running::running_pid(&dir)? {
+            outcomes.push(AllBackupOutcome::SkippedRunning { name, pid: Some(pid) });
+            continue;
+        }
+        match create_backup_unchecked(storage, browser, &name, full, keep) {
+            Ok(outcome) => outcomes.push(AllBackupOutcome::BackedUp { name, outcome }),
+            Err(e) => outcomes.push(AllBackupOutcome::Failed { name, error: e.to_string() }),
+        }
+    }
+    Ok(outcomes)
 }
 
 fn backups_dir(storage: &StorageManager) -> PathBuf {
@@ -332,6 +371,119 @@ fn peek_manifest(archive: &Path) -> Result<BackupManifest> {
     )))
 }
 
+/// Result of validating an archive with `bm backup --verify`.
+#[derive(Debug, Clone)]
+pub struct VerifyReport {
+    /// Profile the archive was taken from.
+    pub name: String,
+    /// Browser the archive belongs to (as stored in the manifest).
+    pub browser: String,
+    pub created_at: DateTime<Utc>,
+    /// The archived proxy, if the profile carried one.
+    pub proxy: Option<crate::proxy::ProxyConfig>,
+    /// bm version that created the archive.
+    pub bm_version: String,
+    /// Number of entries (files, dirs, symlinks) the tar carries.
+    pub entries: usize,
+    /// Total decoded (uncompressed) byte count — proof the zstd frame and
+    /// every tar payload decode end to end.
+    pub decoded_bytes: u64,
+}
+
+/// Validate an archive without extracting it: the zstd frame must decode in
+/// full, every tar entry header must be readable, and the embedded manifest
+/// must parse and carry the expected fields. Any corruption aborts with a
+/// non-zero exit and a specific message.
+pub fn verify_archive(archive: &Path) -> Result<VerifyReport> {
+    let mut file = fs::File::open(archive)
+        .map_err(|e| BmError::Other(format!("cannot open archive {}: {e}", archive.display())))?;
+
+    // The streaming decoder only surfaces a bad magic on first read, so
+    // check the frame magic up front for a precise "not a backup" error.
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic)
+        .map_err(|e| BmError::Other(format!("{} is too short to be a backup: {e}", archive.display())))?;
+    if magic != [0x28, 0xB5, 0x2F, 0xFD] {
+        return Err(BmError::Other(format!(
+            "{} is not a zstd archive (unexpected magic bytes)",
+            archive.display()
+        )));
+    }
+    file.rewind()?;
+
+    let decoder = zstd::Decoder::new(file)?;
+    let mut tar = tar::Archive::new(decoder);
+
+    let mut manifest = None;
+    let mut entries = 0usize;
+    let mut decoded_bytes = 0u64;
+    // Iterating through every entry exercises the full zstd frame: with a
+    // streaming (non-seekable) input, advancing past an entry requires
+    // reading its payload.
+    let iter = tar.entries()?;
+    for entry in iter {
+        let mut entry = entry
+            .map_err(|e| BmError::Other(format!("corrupt archive {}: {e}", archive.display())))?;
+        entries += 1;
+        decoded_bytes += entry.header().size()?;
+
+        if entry.path()? == Path::new(MANIFEST_ENTRY) {
+            let mut buf = String::new();
+            entry.read_to_string(&mut buf).map_err(|e| {
+                BmError::Other(format!(
+                    "cannot read {MANIFEST_ENTRY} in {}: {e}",
+                    archive.display()
+                ))
+            })?;
+            let parsed: BackupManifest = serde_json::from_str(&buf).map_err(|e| {
+                BmError::Other(format!(
+                    "manifest in {} does not parse: {e}",
+                    archive.display()
+                ))
+            })?;
+            validate_manifest(&parsed, archive)?;
+            manifest = Some(parsed);
+        }
+    }
+
+    let manifest = manifest.ok_or_else(|| {
+        BmError::Other(format!(
+            "no {MANIFEST_ENTRY} in {} — not a bm backup",
+            archive.display()
+        ))
+    })?;
+
+    Ok(VerifyReport {
+        name: manifest.name,
+        browser: manifest.browser,
+        created_at: manifest.created_at,
+        proxy: manifest.proxy,
+        bm_version: manifest.bm_version,
+        entries,
+        decoded_bytes,
+    })
+}
+
+/// The manifest must carry the fields a restore depends on; the archive is
+/// useless when any of them is missing or out of range.
+fn validate_manifest(manifest: &BackupManifest, archive: &Path) -> Result<()> {
+    if manifest.name.is_empty() {
+        return Err(BmError::Other(format!(
+            "manifest in {} has an empty profile name",
+            archive.display()
+        )));
+    }
+    // The browser must map onto a browser bm knows (same table restore uses).
+    Browser::deserialize_manifest_browser(&manifest.browser)?;
+    if manifest.bm_version.is_empty() {
+        return Err(BmError::Other(format!(
+            "manifest in {} is missing the creating bm version",
+            archive.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Extract all entries below `dest`, rejecting path traversal (absolute
 /// paths, `..`, prefixes) so a hostile archive cannot escape the profile dir.
 fn extract_archive(archive: &Path, dest: &Path) -> Result<()> {
@@ -484,6 +636,133 @@ mod tests {
             fs::read_to_string(storage.profile_dir(browser, "work/Default/Cookies")).unwrap(),
             "cookie-db"
         );
+    }
+
+    #[test]
+    fn backup_all_skips_running_profiles_and_snapshots_the_rest() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        seed(&storage, browser, "busy");
+        seed(&storage, browser, "idle");
+
+        // "busy" is held by a live process — this test process itself.
+        std::os::unix::fs::symlink(
+            format!("host-{}", std::process::id()),
+            storage.profile_dir(browser, "busy").join("SingletonLock"),
+        )
+        .unwrap();
+
+        let outcomes = create_backup_all(&storage, browser, false, None).unwrap();
+        assert_eq!(outcomes.len(), 2);
+
+        let mut backed_up = None;
+        for outcome in outcomes {
+            match outcome {
+                AllBackupOutcome::SkippedRunning { name, pid } => {
+                    assert_eq!(name, "busy");
+                    assert_eq!(pid, Some(std::process::id()));
+                    let archived_busy = fs::read_dir(backups_dir(&storage))
+                        .map(|entries| entries.flatten().any(|e| {
+                            e.file_name().to_string_lossy().starts_with("chrome-busy-")
+                        }))
+                        .unwrap_or(false);
+                    assert!(!archived_busy, "running profile must not be archived");
+                }
+                AllBackupOutcome::BackedUp { name, outcome } => {
+                    assert_eq!(name, "idle");
+                    assert!(outcome.path.exists());
+                    backed_up = Some(outcome);
+                }
+                AllBackupOutcome::Failed { name, error } => {
+                    panic!("unexpected failure for {name}: {error}");
+                }
+            }
+        }
+        assert!(backed_up.is_some(), "the stopped profile must be backed up");
+    }
+
+    #[test]
+    fn backup_all_with_no_profiles_is_empty_not_an_error() {
+        let (_tmp, storage) = setup();
+        let outcomes = create_backup_all(&storage, Browser::Chrome, false, None).unwrap();
+        assert!(outcomes.is_empty());
+    }
+
+    #[test]
+    fn verify_accepts_a_valid_archive_and_reports_contents() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        seed(&storage, browser, "work");
+
+        let outcome = create_backup_unchecked(&storage, browser, "work", false, None).unwrap();
+        let report = verify_archive(&outcome.path).unwrap();
+
+        assert_eq!(report.name, "work");
+        assert_eq!(report.browser, "chrome");
+        assert_eq!(
+            report.proxy.as_ref().unwrap().server_string(),
+            "socks5://10.0.0.1:1080"
+        );
+        assert!(!report.bm_version.is_empty());
+        // manifest + Default/Cookies (+ dirs tar-rs records) — at least the manifest.
+        assert!(report.entries >= 2, "expected manifest plus profile entries");
+        assert!(report.decoded_bytes > 0);
+    }
+
+    #[test]
+    fn verify_rejects_truncated_and_garbage_archives() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+        seed(&storage, browser, "work");
+        let outcome = create_backup_unchecked(&storage, browser, "work", true, None).unwrap();
+
+        // Truncated zstd frame: cut the file in half.
+        let full = fs::read(&outcome.path).unwrap();
+        let truncated = tempfile::tempdir().unwrap();
+        let truncated_path = truncated.path().join("cut.tar.zst");
+        fs::write(&truncated_path, &full[..full.len() / 2]).unwrap();
+        let err = verify_archive(&truncated_path).unwrap_err();
+        assert!(err.to_string().contains("corrupt"), "got: {err}");
+
+        // Garbage with the right extension but no zstd magic.
+        let garbage = truncated.path().join("garbage.tar.zst");
+        fs::write(&garbage, b"definitely not zstd").unwrap();
+        let err = verify_archive(&garbage).unwrap_err();
+        assert!(err.to_string().contains("not a zstd archive"), "got: {err}");
+
+        // Valid zstd frame containing a valid-but-empty tar: no manifest.
+        let foreign = truncated.path().join("foreign.tar.zst");
+        let mut empty_tar = Vec::new();
+        tar::Builder::new(&mut empty_tar).finish().unwrap();
+        fs::write(&foreign, zstd::stream::encode_all(&empty_tar[..], 3).unwrap()).unwrap();
+        let err = verify_archive(&foreign).unwrap_err();
+        assert!(err.to_string().contains("not a bm backup"), "got: {err}");
+
+        // Valid zstd frame with non-tar garbage inside reports corruption.
+        let garbage_tar = truncated.path().join("garbage-inner.tar.zst");
+        fs::write(&garbage_tar, zstd::stream::encode_all(&b"hello"[..], 3).unwrap()).unwrap();
+        let err = verify_archive(&garbage_tar).unwrap_err();
+        assert!(err.to_string().contains("corrupt"), "got: {err}");
+
+        let _ = storage;
+    }
+
+    #[test]
+    fn verify_rejects_a_manifest_with_an_unknown_browser() {
+        let evil = tempfile::tempdir().unwrap();
+        let archive = evil.path().join("foreign.tar.zst");
+        let manifest = r#"{"name":"x","browser":"safari","description":"","created_at":"2026-01-01T00:00:00Z","bm_version":"0.0.5"}"#;
+        let mut raw: Vec<u8> = Vec::new();
+        // Reuse the raw-ustar builder from the traversal test.
+        raw.extend_from_slice(&raw_tar_header(MANIFEST_ENTRY, manifest.len()));
+        raw.extend_from_slice(manifest.as_bytes());
+        let pad = (512 - manifest.len() % 512) % 512;
+        raw.extend_from_slice(&vec![0u8; pad]);
+        raw.extend_from_slice(&[0u8; 1024]);
+        fs::write(&archive, zstd::stream::encode_all(&raw[..], 3).unwrap()).unwrap();
+
+        let err = verify_archive(&archive).unwrap_err();
+        assert!(err.to_string().contains("safari"), "got: {err}");
     }
 
     #[test]

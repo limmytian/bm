@@ -8,6 +8,7 @@ mod open;
 mod policy;
 mod proxy;
 mod proxy_test;
+mod running;
 mod shortcut;
 mod size;
 mod storage;
@@ -483,10 +484,99 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
 
-        Commands::Backup { name, full, keep } => {
-            use crate::backup::create_backup;
+        Commands::Backup { name, all, full, keep, verify } => {
+            use crate::backup::{create_backup, create_backup_all, verify_archive, AllBackupOutcome};
 
-            let outcome = create_backup(&storage, browser, &name, full, keep)?;
+            if let Some(archive) = verify {
+                let report = verify_archive(&archive)?;
+                println!(
+                    "{} {} is a valid bm backup",
+                    "OK:".green().bold(),
+                    archive.display().to_string().cyan().bold()
+                );
+                println!(
+                    "  Profile:  {} ({})",
+                    report.name.bold(),
+                    report.browser.cyan()
+                );
+                println!("  Created:  {}", report.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
+                match &report.proxy {
+                    Some(p) => println!("  Proxy:    {}", p.to_string().cyan()),
+                    None => println!("  Proxy:    {}", "none".dimmed()),
+                }
+                println!("  Made by:  bm {}", report.bm_version);
+                println!(
+                    "  Contents: {} entr{}, {} decoded",
+                    report.entries,
+                    if report.entries == 1 { "y" } else { "ies" },
+                    format_bytes(report.decoded_bytes)
+                );
+                return Ok(());
+            }
+
+            if !all && name.is_none() {
+                return Err(crate::error::BmError::Other(
+                    "Specify a profile to back up, use --all for every profile of this browser, or --verify <archive>.".into(),
+                ));
+            }
+
+            if all {
+                let outcomes = create_backup_all(&storage, browser, full, keep)?;
+                let mut backed_up = 0;
+                let mut skipped = 0;
+                let mut failed = 0;
+                for outcome in outcomes {
+                    match outcome {
+                        AllBackupOutcome::BackedUp { name, outcome } => {
+                            backed_up += 1;
+                            println!(
+                                "{} '{}' → {} ({})",
+                                "ok".green().bold(),
+                                name.bold(),
+                                outcome.path.display(),
+                                format_bytes(outcome.archive_bytes)
+                            );
+                            if outcome.pruned > 0 {
+                                println!("    pruned {} older backup(s)", outcome.pruned);
+                            }
+                        }
+                        AllBackupOutcome::SkippedRunning { name, pid } => {
+                            skipped += 1;
+                            match pid {
+                                Some(pid) => println!(
+                                    "{} '{}' — browser is running (pid {}), skipped",
+                                    "skip".yellow().bold(),
+                                    name.bold(),
+                                    pid
+                                ),
+                                None => println!(
+                                    "{} '{}' — browser is running, skipped",
+                                    "skip".yellow().bold(),
+                                    name.bold()
+                                ),
+                            }
+                        }
+                        AllBackupOutcome::Failed { name, error } => {
+                            failed += 1;
+                            println!("{} '{}' — {}", "fail".red().bold(), name.bold(), error);
+                        }
+                    }
+                }
+                println!(
+                    "{} {} backed up, {} skipped, {} failed.",
+                    "Summary:".bold(),
+                    backed_up,
+                    skipped,
+                    failed
+                );
+                if failed > 0 {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+
+            let name = name.as_ref().unwrap();
+            let outcome = create_backup(&storage, browser, name, full, keep)?;
             println!(
                 "{} Snapshot saved to {}",
                 "Success:".green().bold(),
