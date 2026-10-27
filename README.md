@@ -162,13 +162,33 @@ Snapshot a profile to a timestamped `tar.zst` archive under `~/.bm/backups/` —
 ```bash
 bm backup work
 bm backup work --keep 5        # prune older snapshots beyond the 5 newest
+bm backup --all                # snapshot every profile of the selected browser
 bm restore ~/.bm/backups/chrome-work-20261027120000.tar.zst
 bm restore <archive> --name work-rollback   # restore under a different name
 bm restore <archive> --force                # overwrite an existing profile
 ```
-* `bm backup` and `bm restore` refuse to run while the browser is running (same guard as `bm switch`).
+* `bm backup` and `bm restore` refuse to run while the browser is running (same guard as `bm switch`); `bm backup --all` instead **skips and reports** profiles held by a running browser (detected via the Chromium `SingletonLock` pid) and continues with the rest — `--keep` applies per profile.
 * `bm delete` now suggests taking a backup first.
 * Local-machine only: archives are ordinary files you can copy elsewhere, but bm does not sync them.
+
+#### Verify & Encrypt Backups
+```bash
+bm backup --verify ~/.bm/backups/chrome-work-20261027120000.tar.zst
+bm backup work --encrypt                    # encrypted at rest (age format, tar → zstd → age)
+BM_BACKUP_PASSPHRASE=... bm backup --all --encrypt   # non-interactive runs
+```
+`--verify` validates an archive **without extracting it**: the zstd frame must decode in full, every tar entry must be readable, and the embedded manifest (profile, browser, creating bm version, proxy) must parse. Encrypted archives are decrypted in-stream during verification.
+
+**Encryption threat model, stated plainly:** archives contain your full login state, so `--encrypt` seals them with age v1 (scrypt passphrase recipient). The passphrase comes from `BM_BACKUP_PASSPHRASE` or a hidden prompt — it is **never accepted on the command line**. bm does **no key management**: the passphrase is the only key, a lost passphrase means a lost backup, and only the passphrase holder can restore. `bm restore` and `bm backup --verify` detect encrypted archives (`.tar.zst.age`) automatically and prompt/decrypt on the fly; plain and encrypted snapshots share the same `--keep` retention pool.
+
+#### Scheduled Auto-Backup
+Install a daily `bm backup --all` via launchd (macOS) or a systemd user timer (Linux):
+```bash
+bm backup --schedule install --keep 7    # daily at 03:00, per selected --browser
+bm backup --schedule status
+bm backup --schedule uninstall
+```
+The schedule refuses to install twice; logs go to `~/.bm/backup.log` (launchd) or `journalctl --user -u bm-backup-<browser>` (systemd). Test the unit manually with `bm backup --all --keep 7` — that is exactly the command the timer runs.
 
 ### Health Audit
 Audit the bm-managed state for common problems — dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:

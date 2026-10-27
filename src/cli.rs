@@ -157,8 +157,13 @@ pub enum Commands {
         #[arg(long)]
         keep: Option<usize>,
 
+        /// Encrypt the archive with a passphrase (BM_BACKUP_PASSPHRASE or
+        /// hidden prompt; the passphrase is never accepted on the command line)
+        #[arg(long)]
+        encrypt: bool,
+
         /// Validate a snapshot archive without extracting it
-        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["all", "full", "keep"])]
+        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["all", "full", "keep", "encrypt"])]
         verify: Option<PathBuf>,
     },
 

@@ -484,11 +484,12 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
 
-        Commands::Backup { name, all, full, keep, verify } => {
+        Commands::Backup { name, all, full, keep, encrypt, verify } => {
             use crate::backup::{create_backup, create_backup_all, verify_archive, AllBackupOutcome};
 
             if let Some(archive) = verify {
-                let report = verify_archive(&archive)?;
+                let passphrase = crate::backup::passphrase_to_open(&archive)?;
+                let report = verify_archive(&archive, passphrase.as_ref())?;
                 println!(
                     "{} {} is a valid bm backup",
                     "OK:".green().bold(),
@@ -521,7 +522,12 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             if all {
-                let outcomes = create_backup_all(&storage, browser, full, keep)?;
+                let passphrase = if encrypt {
+                    Some(crate::backup::read_passphrase(true)?)
+                } else {
+                    None
+                };
+                let outcomes = create_backup_all(&storage, browser, full, keep, passphrase.as_ref())?;
                 let mut backed_up = 0;
                 let mut skipped = 0;
                 let mut failed = 0;
@@ -576,7 +582,12 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             let name = name.as_ref().unwrap();
-            let outcome = create_backup(&storage, browser, name, full, keep)?;
+            let passphrase = if encrypt {
+                Some(crate::backup::read_passphrase(true)?)
+            } else {
+                None
+            };
+            let outcome = create_backup(&storage, browser, name, full, keep, passphrase.as_ref())?;
             println!(
                 "{} Snapshot saved to {}",
                 "Success:".green().bold(),
@@ -600,7 +611,8 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Restore { file, name, force } => {
             use crate::backup::restore_archive;
 
-            let meta = restore_archive(&storage, &file, name.as_deref(), force)?;
+            let passphrase = crate::backup::passphrase_to_open(&file)?;
+            let meta = restore_archive(&storage, &file, name.as_deref(), force, passphrase.as_ref())?;
             println!(
                 "{} Restored profile '{}' for {}.",
                 "Success:".green().bold(),

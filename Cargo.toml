@@ -22,6 +22,7 @@ inquire = "0.7"
 clap_complete = "4.5"
 tar = "0.4"
 zstd = "0.13"
+age = "0.12.1"
 
 [dev-dependencies]
 tempfile = "3.17"
