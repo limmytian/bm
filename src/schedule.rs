@@ -9,8 +9,12 @@
 //! only load/unload them.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+#[cfg(target_os = "macos")]
+use std::process::Stdio;
 
 use crate::browser::Browser;
 use crate::error::{BmError, Result};
@@ -385,7 +389,7 @@ pub fn status(storage: &StorageManager, browser: Browser) -> Result<String> {
 
     #[cfg(target_os = "linux")]
     {
-        status_linux(browser)
+        status_linux(storage, browser)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -419,7 +423,7 @@ fn status_macos(storage: &StorageManager, browser: Browser) -> Result<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn status_linux(browser: Browser) -> Result<String> {
+fn status_linux(_storage: &StorageManager, browser: Browser) -> Result<String> {
     {
         let timer = systemd_unit_dir().join(format!("{}.timer", unit_name(browser)));
         if !timer.exists() {

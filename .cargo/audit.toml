@@ -1,0 +1,8 @@
+[advisories]
+# RUSTSEC-2026-0387 (crypto-bigint < 0.7, timing variability): the version is
+# pinned by age 0.12 -> elliptic-curve 0.13; no compatible upstream release
+# exists yet. bm only uses age's scrypt passphrase path (no p256/hpke/x25519
+# SSH recipients), and backups are local files, not a network surface —
+# accepted risk until age updates its dependency tree. Revisit when age
+# releases a version pulling crypto-bigint >= 0.7.
+ignore = ["RUSTSEC-2026-0387"]
