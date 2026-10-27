@@ -21,8 +21,23 @@ pub struct ProfileMetadata {
     pub proxy: Option<ProxyConfig>,
 }
 
+/// Schema version of `~/.bm/metadata.json`. Version 1 is the initial
+/// versioned layout (identical to the pre-versioning format, plus this
+/// field). Files written before versioning carry no field and load as
+/// version 1 via `#[serde(default)]`; the forward-migration ladder in
+/// `migrate_registry` upgrades older versions on load.
+pub const METADATA_SCHEMA_VERSION: u32 = 1;
+
+fn current_schema_version() -> u32 {
+    METADATA_SCHEMA_VERSION
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Registry {
+    /// Layout version of this registry file. Absent in pre-versioning
+    /// files, which are layout-compatible with version 1.
+    #[serde(default = "current_schema_version")]
+    pub schema_version: u32,
     pub profiles: HashMap<String, ProfileMetadata>,
 }
 
@@ -198,24 +213,46 @@ impl StorageManager {
     }
 
     /// Load metadata registry from ~/.bm/metadata.json.
+    ///
+    /// Versioning: the on-disk `schema_version` is checked *before* the full
+    /// deserialize so a registry written by a newer bm fails loudly instead
+    /// of silently losing fields on the next save (downgrade protection).
+    /// Older/absent versions are migrated forward by `migrate_registry`.
     pub fn load_registry(&self) -> Result<Registry> {
         let file = self.metadata_file();
         if !file.exists() {
             return Ok(Registry::default());
         }
         let content = fs::read_to_string(&file)?;
+        // Corrupt JSON keeps the historical lenient behavior (empty
+        // registry): a hard error here would brick every command after a
+        // interrupted write, while the next save simply rebuilds the file.
+        let Ok(raw) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return Ok(Registry::default());
+        };
+        let version = raw
+            .get("schema_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(METADATA_SCHEMA_VERSION as u64) as u32;
+        if version > METADATA_SCHEMA_VERSION {
+            return Err(BmError::MetadataVersionTooNew {
+                found: version,
+                supported: METADATA_SCHEMA_VERSION,
+            });
+        }
         let registry: Registry = serde_json::from_str(&content).unwrap_or_default();
-        Ok(registry)
+        migrate_registry(registry, version)
     }
 
-    /// Save metadata registry to ~/.bm/metadata.json.
+    /// Save metadata registry to ~/.bm/metadata.json (atomic: temp + rename,
+    /// so an interrupted write can never truncate the file).
     pub fn save_registry(&self, registry: &Registry) -> Result<()> {
         if !self.base_dir.exists() {
             fs::create_dir_all(&self.base_dir)?;
         }
-        let file = self.metadata_file();
-        let content = serde_json::to_string_pretty(registry)?;
-        fs::write(file, content)?;
+        let tmp = self.base_dir.join("metadata.json.tmp");
+        fs::write(&tmp, serde_json::to_string_pretty(registry)?)?;
+        fs::rename(&tmp, self.metadata_file())?;
         Ok(())
     }
 
@@ -721,6 +758,23 @@ impl StorageManager {
     }
 }
 
+/// Forward-migration ladder for the metadata registry: upgrades an
+/// in-memory registry from `from_version` to [`METADATA_SCHEMA_VERSION`],
+/// one step per version. Each arm transforms the previous layout; the
+/// migrated registry is persisted by the caller's next save. Versions above
+/// the current one are rejected earlier, in `load_registry`.
+fn migrate_registry(mut registry: Registry, from_version: u32) -> Result<Registry> {
+    let mut version = from_version;
+    while version < METADATA_SCHEMA_VERSION {
+        registry.schema_version = version + 1;
+        // Future transitions go here, e.g. `1 => { transform v1 → v2 }`.
+        // There is no v1 → v2 change yet, so every step is a no-op marker.
+        version += 1;
+    }
+    registry.schema_version = METADATA_SCHEMA_VERSION;
+    Ok(registry)
+}
+
 /// Recursively copy `src_dir` → `dst_dir`, judging skip decisions against
 /// `rel_to_root` (the current directory's path relative to the profile
 /// root). Symlinks are recreated pointing at the same target (possibly
@@ -988,5 +1042,63 @@ mod tests {
         assert_eq!(relative_time(now - chrono::Duration::days(12), now), "12d ago");
         // Future timestamps clamp instead of going negative.
         assert_eq!(relative_time(now + chrono::Duration::hours(2), now), "just now");
+    }
+
+    /// A metadata.json written before versioning: no schema_version field.
+    const LEGACY_METADATA: &str = r#"{"profiles":{"chrome:old":{"name":"old","browser":"chrome","description":"pre-versioning","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}}"#;
+
+    #[test]
+    fn legacy_metadata_without_schema_version_loads() {
+        let (_tmp, storage) = setup();
+        fs::create_dir_all(storage.base_dir()).unwrap();
+        fs::write(storage.metadata_file(), LEGACY_METADATA).unwrap();
+
+        let reg = storage.load_registry().unwrap();
+        assert_eq!(reg.schema_version, METADATA_SCHEMA_VERSION);
+        assert_eq!(reg.profiles.len(), 1);
+        assert_eq!(reg.profiles["chrome:old"].description, "pre-versioning");
+
+        // A round-trip through save persists the versioned form.
+        storage.save_registry(&reg).unwrap();
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(storage.metadata_file()).unwrap()).unwrap();
+        assert_eq!(raw["schema_version"], METADATA_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn newer_schema_version_is_rejected_without_modifying_the_file() {
+        let (_tmp, storage) = setup();
+        fs::create_dir_all(storage.base_dir()).unwrap();
+        let future = r#"{"schema_version":99,"profiles":{}}"#;
+        fs::write(storage.metadata_file(), future).unwrap();
+        let before = fs::read_to_string(storage.metadata_file()).unwrap();
+
+        let err = storage.load_registry().unwrap_err();
+        assert!(matches!(err, BmError::MetadataVersionTooNew { found: 99, supported: 1 }));
+        assert_eq!(fs::read_to_string(storage.metadata_file()).unwrap(), before);
+        // The message must tell the user what happened and what to do.
+        assert!(err.to_string().contains("upgrade bm"));
+    }
+
+    #[test]
+    fn corrupt_metadata_still_reads_as_empty() {
+        let (_tmp, storage) = setup();
+        fs::create_dir_all(storage.base_dir()).unwrap();
+        fs::write(storage.metadata_file(), "not json{").unwrap();
+        let reg = storage.load_registry().unwrap();
+        assert!(reg.profiles.is_empty());
+    }
+
+    #[test]
+    fn save_registry_is_atomic_and_leaves_no_temp_file() {
+        let (_tmp, storage) = setup();
+        storage.create_profile("work", None, Browser::Chrome).unwrap();
+        let reg = storage.load_registry().unwrap();
+        storage.save_registry(&reg).unwrap();
+
+        assert!(storage.metadata_file().exists());
+        assert!(!storage.base_dir().join("metadata.json.tmp").exists());
+        // Reload from disk picks the entry back up.
+        assert!(storage.load_registry().unwrap().profiles.contains_key("chrome:work"));
     }
 }
