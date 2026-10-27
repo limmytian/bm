@@ -2,6 +2,18 @@ use crate::browser::Browser;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+/// Action for `bm cdp <ACTION>`.
+#[derive(Debug, Clone, Subcommand)]
+pub enum CdpAction {
+    /// List profiles with a live CDP endpoint (dead entries are purged)
+    Status,
+    /// Gracefully close the browser behind a profile's endpoint (Browser.close)
+    Close {
+        /// Profile whose CDP endpoint to close
+        name: String,
+    },
+}
+
 /// Action for `bm backup --schedule <ACTION>`.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ScheduleAction {
@@ -132,6 +144,12 @@ pub enum Commands {
         /// names launch as profiles, the rest open as URLs
         #[arg(value_name = "PROFILE|URL")]
         rest: Vec<String>,
+
+        /// Enable Chrome DevTools Protocol for this launch: OS-assigned
+        /// loopback port, endpoint printed and persisted (full browser
+        /// control — agent tooling only)
+        #[arg(long)]
+        cdp: bool,
     },
 
     /// Show per-profile disk usage (cache vs core data)
@@ -220,6 +238,12 @@ pub enum Commands {
     /// Print the roff man page (bm(1)) to stdout
     #[command(hide = true)]
     Manpage,
+
+    /// Manage CDP endpoints created with `bm open --cdp`
+    Cdp {
+        #[command(subcommand)]
+        action: CdpAction,
+    },
 
     /// Manage the per-profile egress proxy
     Proxy {

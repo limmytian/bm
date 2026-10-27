@@ -193,6 +193,43 @@ bm backup --schedule uninstall
 ```
 The schedule refuses to install twice; logs go to `~/.bm/backup.log` (launchd) or `journalctl --user -u bm-backup-<browser>` (systemd). Test the unit manually with `bm backup --all --keep 7` — that is exactly the command the timer runs.
 
+### CDP Access for Agents (`bm open --cdp`)
+Hand agent tooling (Playwright, Puppeteer, browser-use, chrome-remote-interface) a browser with **real sessions and real egress identity** instead of a fresh incognito instance — bm profiles are the identity layer:
+```bash
+bm open agent-work --cdp
+# Warning: --cdp hands FULL control of this browser (sessions, cookies, everything)
+# to anyone who can reach the endpoint — loopback only.
+# Success: Launched Google Chrome profile 'agent-work' — global default profile unchanged.
+# CDP endpoint: ws://127.0.0.1:51234/devtools/browser/8f2a...
+```
+* **Strictly opt-in, every time**: CDP is enabled only when the exact launch carries `--cdp`. Shortcuts, managed policy, and every other bm path never add debugging flags.
+* **No fixed ports, ever**: launches use `--remote-debugging-port=0` (OS-assigned) and bm discovers the real port from `DevToolsActivePort` inside the profile dir — collision-free by construction.
+* **Loopback only**: launches pin `--remote-debugging-address=127.0.0.1`. Endpoints are persisted in `~/.bm/cdp.json` with mode 0600.
+* **Singleton-safe**: re-running `bm open <name> --cdp` on a running profile returns the live endpoint instead of spawning a duplicate; a profile already running *without* `--cdp` is reported (a re-launch cannot enable debugging on a running instance).
+* Chrome 136+ restricts debugging on the *default* user-data-dir — bm profiles are custom dirs, so this is compliant.
+
+Inspect and close:
+```bash
+bm cdp status                 # live endpoints (dead entries purged)
+bm cdp close agent-work       # graceful shutdown via the CDP Browser.close method
+```
+
+#### Connecting from Agent Tooling
+```python
+# Playwright (Python) — full browser, real logins, profile's egress proxy
+browser = playwright.chromium.connect_over_cdp("ws://127.0.0.1:51234/devtools/browser/…")
+```
+```javascript
+// Puppeteer
+const browser = await puppeteer.connect({ browserWSEndpoint: "ws://127.0.0.1:51234/devtools/browser/…" });
+```
+```javascript
+// chrome-remote-interface
+const CDP = require('chrome-remote-interface');
+const client = await CDP({ webSocketDebuggerUrl: "ws://127.0.0.1:51234/devtools/browser/…" });
+```
+**Use a dedicated bm profile for agent work** (e.g. `bm create agent-work`). The agent sees and can do everything every session in that profile can — keep your personal logins out of it.
+
 ### Status At A Glance
 One read-only command that answers "what is bm doing right now?" for the selected browser — no browser launch, fast enough to alias:
 ```bash

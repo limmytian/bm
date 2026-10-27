@@ -1,6 +1,7 @@
 mod backup;
 mod browser;
 mod cache;
+mod cdp;
 mod cli;
 mod doctor;
 mod error;
@@ -22,7 +23,7 @@ use colored::Colorize;
 use std::io::{self, Write};
 
 use crate::browser::Browser;
-use crate::cli::{Cli, Commands, ProxyAction, ScheduleAction};
+use crate::cli::{CdpAction, Cli, Commands, ProxyAction, ScheduleAction};
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
@@ -345,9 +346,15 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
 
-            Commands::Open { name, rest } => {
+            Commands::Open { name, rest, cdp } => {
                 let (profiles, urls) = crate::open::split_open_args(name, rest);
-                let outcomes = OpenLauncher::launch_all(&storage, browser, &profiles, &urls)?;
+                if cdp {
+                    println!(
+                        "{} --cdp hands FULL control of this browser (sessions, cookies, everything) to anyone who can reach the endpoint — loopback only.",
+                        "Warning:".yellow().bold()
+                    );
+                }
+                let outcomes = OpenLauncher::launch_all(&storage, browser, &profiles, &urls, cdp)?;
                 let failures: Vec<&crate::open::OpenOutcome> =
                     outcomes.iter().filter(|o| o.error.is_some()).collect();
 
@@ -358,6 +365,17 @@ fn run(cli: Cli) -> Result<()> {
                         browser.display_name().cyan(),
                         outcomes[0].profile.bold()
                     );
+                    if let Some(endpoint) = &outcomes[0].cdp_endpoint {
+                        if outcomes[0].cdp_reused {
+                            println!("CDP endpoint (already running): {}", endpoint.cyan().bold());
+                        } else {
+                            println!("CDP endpoint: {}", endpoint.cyan().bold());
+                        }
+                        println!(
+                            "  Connect with Playwright: {}",
+                            format!("chromium.connect_over_cdp(\"{endpoint}\")").dimmed()
+                        );
+                    }
                 } else {
                     for outcome in &outcomes {
                         match &outcome.error {
@@ -372,6 +390,20 @@ fn run(cli: Cli) -> Result<()> {
                                 outcome.profile.bold(),
                                 err
                             ),
+                        }
+                        if let Some(endpoint) = &outcome.cdp_endpoint {
+                            if outcome.cdp_reused {
+                                println!(
+                                    "  CDP endpoint (already running): {}",
+                                    endpoint.cyan().bold()
+                                );
+                            } else {
+                                println!("  CDP endpoint: {}", endpoint.cyan().bold());
+                            }
+                            println!(
+                                "    Connect with Playwright: {}",
+                                format!("chromium.connect_over_cdp(\"{endpoint}\")").dimmed()
+                            );
                         }
                     }
                     println!(
@@ -821,6 +853,74 @@ fn run(cli: Cli) -> Result<()> {
                 format!("bm switch {}", meta.name).green()
             );
             }
+
+            Commands::Cdp { action } => match action {
+                CdpAction::Status => {
+                    let purged = crate::cdp::purge_dead_entries(&storage)?;
+                    if purged > 0 {
+                        println!("Purged {} dead endpoint(s).", purged);
+                    }
+                    let registry = crate::cdp::load_registry(&storage);
+                    if registry.is_empty() {
+                        println!(
+                            "No CDP endpoints. Start one with {}.",
+                            "bm open <name> --cdp".green()
+                        );
+                        return Ok(());
+                    }
+                    println!("{}:", "Live CDP endpoints".bold());
+                    for (key, entry) in registry {
+                        if crate::cdp::port_alive(entry.port) {
+                            println!(
+                                "  {} → {} (since {})",
+                                key.bold(),
+                                entry.ws_url().cyan(),
+                                entry.started_at.format("%Y-%m-%d %H:%M")
+                            );
+                        }
+                    }
+                    println!(
+                        "Close one with {} — a graceful Browser.close, never SIGKILL.",
+                        "bm cdp close <profile>".green()
+                    );
+                }
+                CdpAction::Close { name } => {
+                    let entry = crate::cdp::load_registry(&storage)
+                        .remove(&format!("{browser}:{name}"))
+                        .ok_or_else(|| {
+                            crate::error::BmError::Other(format!(
+                                "no CDP endpoint recorded for {browser}:{name} — check {}",
+                                "bm cdp status".green()
+                            ))
+                        })?;
+                    if !crate::cdp::port_alive(entry.port) {
+                        crate::cdp::remove_entry(&storage, browser, &name)?;
+                        println!("Endpoint was already dead — registry entry removed.");
+                        return Ok(());
+                    }
+                    crate::cdp::close_via_browser_close(&entry)?;
+                    // Wait for the browser to actually release the port.
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while crate::cdp::port_alive(entry.port) && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
+                    crate::cdp::remove_entry(&storage, browser, &name)?;
+                    if crate::cdp::port_alive(entry.port) {
+                        println!(
+                            "{} Browser.close was acknowledged but 127.0.0.1:{} is still accepting connections — check the browser.",
+                            "Warning:".yellow().bold(),
+                            entry.port
+                        );
+                    } else {
+                        println!(
+                            "{} Browser closed cleanly via CDP (127.0.0.1:{}).",
+                            "Success:".green().bold(),
+                            entry.port
+                        );
+                    }
+                }
+            },
 
             Commands::Proxy { action } => match action {
                 ProxyAction::Set {

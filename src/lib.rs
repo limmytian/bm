@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod browser;
 pub mod cache;
+pub mod cdp;
 pub mod cli;
 pub mod doctor;
 pub mod error;
