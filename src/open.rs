@@ -164,8 +164,10 @@ mod tests {
 
         // Historical single-profile forms: everything that cannot be a
         // profile name stays a URL.
-        let (profiles, urls) =
-            split_open_args("work".into(), vec!["https://x.com".into(), "example.com".into()]);
+        let (profiles, urls) = split_open_args(
+            "work".into(),
+            vec!["https://x.com".into(), "example.com".into()],
+        );
         assert_eq!(profiles, vec!["work"]);
         assert_eq!(urls, vec!["https://x.com", "example.com"]);
 
@@ -182,7 +184,8 @@ mod tests {
         assert_eq!(urls, vec!["https://x.com", "localhost:3000"]);
 
         // Names with underscore/dash/digits still classify as profiles.
-        let (profiles, _) = split_open_args("team_1".into(), vec!["old-acct".into(), "2026".into()]);
+        let (profiles, _) =
+            split_open_args("team_1".into(), vec!["old-acct".into(), "2026".into()]);
         assert_eq!(profiles, vec!["team_1", "old-acct", "2026"]);
 
         // Empty rest: plain single profile.

@@ -770,6 +770,12 @@ fn run(cli: Cli) -> Result<()> {
                 clap_complete::generate(shell, &mut cmd, "bm", &mut std::io::stdout());
             }
 
+            Commands::Manpage => {
+                use clap::CommandFactory;
+                let cmd = Cli::command();
+                clap_mangen::Man::new(cmd).render(&mut io::stdout())?;
+            }
+
             Commands::Export { name, file } => {
                 let out = transfer::export_profile(&storage, browser, &name, file.as_deref())?;
                 println!(

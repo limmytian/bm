@@ -37,6 +37,13 @@ jobs:
       - name: Build binary
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Generate man page
+        run: |
+          # The target binary is native to this runner, so it can render
+          # bm(1) itself; the page is architecture-independent.
+          "./target/${{ matrix.target }}/release/bm" manpage \
+            > "target/${{ matrix.target }}/release/bm.1"
+
       - name: Package archive
         run: |
           RAW_TAG="${{ github.ref_name }}"
@@ -47,7 +54,7 @@ jobs:
           ARCHIVE_NAME="bm-${VERSION}-linux-${{ matrix.arch_name }}.tar.gz"
 
           cd "target/${{ matrix.target }}/release"
-          tar -czf "../../../${ARCHIVE_NAME}" bm
+          tar -czf "../../../${ARCHIVE_NAME}" bm bm.1
           cd ../../..
 
           shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
@@ -88,12 +95,17 @@ jobs:
 
           gh release view "$RAW_TAG" >/dev/null 2>&1 || gh release create "$RAW_TAG" --title "$RAW_TAG" --notes "Release $RAW_TAG"
 
+          # Render bm(1) once from the native build — the man page does not
+          # vary per architecture.
+          cargo build --release
+          ./target/release/bm manpage > bm.1
+
           for pair in "aarch64-apple-darwin arm64" "x86_64-apple-darwin x64"; do
             set -- $pair
             TARGET="$1"; ARCH="$2"
             cargo build --release --target "$TARGET"
             ARCHIVE_NAME="bm-${VERSION}-darwin-${ARCH}.tar.gz"
-            tar -czf "$ARCHIVE_NAME" -C "target/${TARGET}/release" bm
+            tar -czf "$ARCHIVE_NAME" -C "target/${TARGET}/release" bm -C "$PWD" bm.1
             shasum -a 256 "$ARCHIVE_NAME" > "$ARCHIVE_NAME.sha256"
             gh release upload "$RAW_TAG" "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256" --clobber
             rm -f "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256"

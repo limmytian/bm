@@ -252,6 +252,13 @@ bm completions zsh > ~/.zfunc/_bm   # ensure ~/.zfunc is in $fpath before compin
 bm completions fish > ~/.config/fish/completions/bm.fish
 ```
 
+### Man Page
+`bm(1)` is generated from the same CLI definition (clap_mangen) and ships in every release archive:
+```bash
+bm manpage | sudo tee /usr/local/share/man/man1/bm.1 >/dev/null   # then: man bm
+```
+Release tarballs contain `bm.1`; copy it into any directory on your `manpath` (e.g. `/usr/local/share/man/man1/` or `~/.local/share/man/man1/`).
+
 ---
 
 ## 📂 Architecture & Directory Layout

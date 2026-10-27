@@ -216,6 +216,10 @@ pub enum Commands {
         shell: clap_complete::Shell,
     },
 
+    /// Print the roff man page (bm(1)) to stdout
+    #[command(hide = true)]
+    Manpage,
+
     /// Manage the per-profile egress proxy
     Proxy {
         #[command(subcommand)]
