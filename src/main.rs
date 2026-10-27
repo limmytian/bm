@@ -9,6 +9,7 @@ mod policy;
 mod proxy;
 mod proxy_test;
 mod running;
+mod schedule;
 mod shortcut;
 mod size;
 mod storage;
@@ -18,7 +19,7 @@ use clap::Parser;
 use colored::Colorize;
 
 use crate::browser::Browser;
-use crate::cli::{Cli, Commands, ProxyAction};
+use crate::cli::{Cli, Commands, ProxyAction, ScheduleAction};
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
@@ -484,8 +485,18 @@ fn run(cli: Cli) -> Result<()> {
             }
         }
 
-        Commands::Backup { name, all, full, keep, encrypt, verify } => {
+        Commands::Backup { name, all, full, keep, encrypt, schedule, verify } => {
             use crate::backup::{create_backup, create_backup_all, verify_archive, AllBackupOutcome};
+
+            if let Some(action) = schedule {
+                let message = match action {
+                    ScheduleAction::Install => crate::schedule::install(&storage, browser, keep)?,
+                    ScheduleAction::Uninstall => crate::schedule::uninstall(&storage, browser)?,
+                    ScheduleAction::Status => crate::schedule::status(&storage, browser)?,
+                };
+                println!("{message}");
+                return Ok(());
+            }
 
             if let Some(archive) = verify {
                 let passphrase = crate::backup::passphrase_to_open(&archive)?;

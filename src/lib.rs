@@ -9,6 +9,7 @@ pub mod policy;
 pub mod proxy;
 pub mod proxy_test;
 pub mod running;
+pub mod schedule;
 pub mod shortcut;
 pub mod size;
 pub mod storage;

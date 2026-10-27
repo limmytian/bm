@@ -1,6 +1,17 @@
 use std::path::PathBuf;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use crate::browser::Browser;
+
+/// Action for `bm backup --schedule <ACTION>`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ScheduleAction {
+    /// Install the daily auto-backup unit for the selected browser
+    Install,
+    /// Remove the scheduled unit
+    Uninstall,
+    /// Show whether the schedule is installed and loaded
+    Status,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -162,6 +173,10 @@ pub enum Commands {
         #[arg(long)]
         encrypt: bool,
 
+        /// Install, remove, or inspect the daily auto-backup schedule
+        #[arg(long, value_enum, conflicts_with_all = ["name", "all", "full", "keep", "encrypt", "verify"])]
+        schedule: Option<ScheduleAction>,
+
         /// Validate a snapshot archive without extracting it
         #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["all", "full", "keep", "encrypt"])]
         verify: Option<PathBuf>,
@@ -203,8 +218,7 @@ pub enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum ProxyAction {
-    /// Set the egress proxy for a profile
+pub enum ProxyAction {    /// Set the egress proxy for a profile
     Set {
         /// Name of the profile
         name: String,
