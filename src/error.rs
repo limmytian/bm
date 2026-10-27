@@ -20,6 +20,9 @@ pub enum BmError {
     #[error("Invalid proxy configuration: {0}")]
     InvalidProxy(String),
 
+    #[error("metadata.json uses schema version {found}, but this bm build supports up to {supported}. The file was written by a newer bm — upgrade bm before touching profiles (nothing was modified).")]
+    MetadataVersionTooNew { found: u32, supported: u32 },
+
     #[error("Platform unsupported: {0}")]
     UnsupportedPlatform(String),
 

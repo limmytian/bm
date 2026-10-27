@@ -1,6 +1,29 @@
-use std::path::PathBuf;
-use clap::{Parser, Subcommand};
 use crate::browser::Browser;
+use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
+
+/// Action for `bm cdp <ACTION>`.
+#[derive(Debug, Clone, Subcommand)]
+pub enum CdpAction {
+    /// List profiles with a live CDP endpoint (dead entries are purged)
+    Status,
+    /// Gracefully close the browser behind a profile's endpoint (Browser.close)
+    Close {
+        /// Profile whose CDP endpoint to close
+        name: String,
+    },
+}
+
+/// Action for `bm backup --schedule <ACTION>`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ScheduleAction {
+    /// Install the daily auto-backup unit for the selected browser
+    Install,
+    /// Remove the scheduled unit
+    Uninstall,
+    /// Show whether the schedule is installed and loaded
+    Status,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -17,6 +40,11 @@ pub struct Cli {
     /// Target browser (chrome, edge, brave, or chromium)
     #[arg(short, long, global = true, value_enum, default_value_t = Browser::Chrome)]
     pub browser: Browser,
+
+    /// Emit machine-readable JSON (list, current, doctor, proxy show,
+    /// status, size; schemas documented in docs/json.md)
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -106,23 +134,28 @@ pub enum Commands {
         dest: Option<PathBuf>,
     },
 
-    /// Launch a profile ad-hoc without switching the global default profile
+    /// Launch profiles ad-hoc without switching the global default profile
+    /// (multiple names launch side by side)
     Open {
-        /// Name of the profile to launch
+        /// Name of the profile to launch (first of possibly several)
         name: String,
 
-        /// Optional URLs to open in the launched browser
-        urls: Vec<String>,
+        /// More profile names and/or URLs: tokens that are valid profile
+        /// names launch as profiles, the rest open as URLs
+        #[arg(value_name = "PROFILE|URL")]
+        rest: Vec<String>,
+
+        /// Enable Chrome DevTools Protocol for this launch: OS-assigned
+        /// loopback port, endpoint printed and persisted (full browser
+        /// control — agent tooling only)
+        #[arg(long)]
+        cdp: bool,
     },
 
     /// Show per-profile disk usage (cache vs core data)
     Size {
         /// Optional profile name; omit to summarize every profile
         name: Option<String>,
-
-        /// Emit machine-readable JSON
-        #[arg(long)]
-        json: bool,
     },
 
     /// Delete regenerable caches from profiles to reclaim disk space
@@ -139,18 +172,36 @@ pub enum Commands {
         dry_run: bool,
     },
 
-    /// Create a local snapshot of a profile (tar+zstd, caches excluded)
+    /// Create a local snapshot of a profile (tar+zstd, caches excluded), or
+    /// verify/restore an existing snapshot
     Backup {
-        /// Profile to back up
-        name: String,
+        /// Profile to back up; required unless --all or a mode flag is given
+        name: Option<String>,
+
+        /// Back up every profile of the selected browser (running profiles are skipped)
+        #[arg(long)]
+        all: bool,
 
         /// Include regenerable caches (skipped by default)
         #[arg(long)]
         full: bool,
 
-        /// Keep only the N newest backups of this profile (default: keep all)
+        /// Keep only the N newest backups per profile (default: keep all)
         #[arg(long)]
         keep: Option<usize>,
+
+        /// Encrypt the archive with a passphrase (BM_BACKUP_PASSPHRASE or
+        /// hidden prompt; the passphrase is never accepted on the command line)
+        #[arg(long)]
+        encrypt: bool,
+
+        /// Install, remove, or inspect the daily auto-backup schedule
+        #[arg(long, value_enum, conflicts_with_all = ["name", "all", "full", "keep", "encrypt", "verify"])]
+        schedule: Option<ScheduleAction>,
+
+        /// Validate a snapshot archive without extracting it
+        #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["all", "full", "keep", "encrypt"])]
+        verify: Option<PathBuf>,
     },
 
     /// Restore a profile snapshot created by bm backup
@@ -167,6 +218,9 @@ pub enum Commands {
         force: bool,
     },
 
+    /// One-screen overview: active profile, running instances, proxies, backups
+    Status,
+
     /// Audit profile storage health and offer safe repairs
     Doctor {
         /// Apply the safe repairs (dangling symlink removal, metadata backfill)
@@ -181,10 +235,47 @@ pub enum Commands {
         shell: clap_complete::Shell,
     },
 
+    /// Print the roff man page (bm(1)) to stdout
+    #[command(hide = true)]
+    Manpage,
+
+    /// Run the built-in stdio MCP server (agent tool interface)
+    Mcp,
+
+    /// Manage CDP endpoints created with `bm open --cdp`
+    Cdp {
+        #[command(subcommand)]
+        action: CdpAction,
+    },
+
     /// Manage the per-profile egress proxy
     Proxy {
         #[command(subcommand)]
         action: ProxyAction,
+    },
+
+    /// Share a profile's configuration as a small bundle (no session data)
+    Export {
+        /// Profile to export
+        name: String,
+
+        /// Output file (default: ~/.bm/exports/bm-export-<name>-<ts>.json)
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+    },
+
+    /// Register a profile from an exported configuration bundle
+    Import {
+        /// Path to an export bundle (JSON)
+        file: PathBuf,
+
+        /// Register under a different name than the bundle's
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Re-register over an existing profile (existing data is kept)
+        #[arg(long)]
+        force: bool,
     },
 }
 

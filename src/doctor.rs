@@ -6,8 +6,8 @@
 //! (external symlinks, orphaned metadata, broken shortcuts, macOS policy
 //! conflicts, permissions) is report-only with guidance.
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::browser::Browser;
 use crate::error::Result;
@@ -361,8 +361,7 @@ mod tests {
             fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let default_link = tmp.path().join("default-link");
-        let storage = StorageManager::with_base_dir(base)
-            .with_default_dir_override(default_link);
+        let storage = StorageManager::with_base_dir(base).with_default_dir_override(default_link);
         (tmp, storage, Browser::Chrome)
     }
 
@@ -386,7 +385,10 @@ mod tests {
         assert!(issues[0].repair.is_some());
 
         assert_eq!(apply_fixes(&storage, &issues).unwrap(), 1);
-        assert!(fs::symlink_metadata(&link).is_err(), "dangling symlink removed");
+        assert!(
+            fs::symlink_metadata(&link).is_err(),
+            "dangling symlink removed"
+        );
     }
 
     #[test]
@@ -439,7 +441,10 @@ mod tests {
             .expect("registry-orphan issue");
         assert_eq!(orphan_meta.repair, None);
 
-        assert_eq!(apply_fixes(&storage, std::slice::from_ref(backfill)).unwrap(), 1);
+        assert_eq!(
+            apply_fixes(&storage, std::slice::from_ref(backfill)).unwrap(),
+            1
+        );
         let reg = storage.load_registry().unwrap();
         assert!(reg.profiles.contains_key("chrome:orphandir"));
     }
@@ -453,7 +458,10 @@ mod tests {
         fs::create_dir_all(&scripts).unwrap();
         fs::write(
             scripts.join("chrome-gone.sh"),
-            format!("#!/bin/sh\nexec \"chrome\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n", missing.display()),
+            format!(
+                "#!/bin/sh\nexec \"chrome\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n",
+                missing.display()
+            ),
         )
         .unwrap();
         // A healthy artifact must not be reported.
@@ -461,7 +469,10 @@ mod tests {
         fs::create_dir_all(&healthy_dir).unwrap();
         fs::write(
             scripts.join("chrome-alive.sh"),
-            format!("#!/bin/sh\nexec \"chrome\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n", healthy_dir.display()),
+            format!(
+                "#!/bin/sh\nexec \"chrome\" --user-data-dir=\"{}\" --no-first-run \"$@\"\n",
+                healthy_dir.display()
+            ),
         )
         .unwrap();
 
@@ -489,11 +500,7 @@ mod tests {
 
         let (_tmp, storage, browser) = setup();
         storage.create_profile("work", None, browser).unwrap();
-        fs::set_permissions(
-            storage.base_dir(),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        fs::set_permissions(storage.base_dir(), fs::Permissions::from_mode(0o755)).unwrap();
 
         let issues = run_checks(&storage, browser).unwrap();
         assert!(issues.iter().any(|i| i.check == "permissions"));

@@ -135,8 +135,11 @@ Launch the browser directly against a profile with its proxy flags, without touc
 ```bash
 bm open work
 bm open personal --browser edge https://github.com https://news.ycombinator.com
+bm open work personal guest          # multi-account: three profiles side by side
+bm open work personal https://gmail.com   # same URLs for every launched profile
 ```
-* The CLI returns immediately; the profile's egress proxy is applied automatically.
+* The CLI returns immediately; each profile's egress proxy is applied automatically.
+* **Multi-profile grammar**: the first token is always a profile name; every token after it that is a *valid profile name* launches as another profile, and anything else (contains `.`, `:`, `/`, …) opens as a URL in all launched profiles. This keeps `bm open <name> [urls...]` fully back-compatible. Per-profile launch results are reported; a missing profile is reported and the run exits non-zero.
 * Running browser instances are fine: a distinct profile directory runs side by side. Re-running `bm open <name> <url>` hands the URLs to that profile's running instance.
 
 ### Show Disk Usage (Cache vs Core)
@@ -162,13 +165,77 @@ Snapshot a profile to a timestamped `tar.zst` archive under `~/.bm/backups/` —
 ```bash
 bm backup work
 bm backup work --keep 5        # prune older snapshots beyond the 5 newest
+bm backup --all                # snapshot every profile of the selected browser
 bm restore ~/.bm/backups/chrome-work-20261027120000.tar.zst
 bm restore <archive> --name work-rollback   # restore under a different name
 bm restore <archive> --force                # overwrite an existing profile
 ```
-* `bm backup` and `bm restore` refuse to run while the browser is running (same guard as `bm switch`).
+* `bm backup` and `bm restore` refuse to run while the browser is running (same guard as `bm switch`); `bm backup --all` instead **skips and reports** profiles held by a running browser (detected via the Chromium `SingletonLock` pid) and continues with the rest — `--keep` applies per profile.
 * `bm delete` now suggests taking a backup first.
 * Local-machine only: archives are ordinary files you can copy elsewhere, but bm does not sync them.
+
+#### Verify & Encrypt Backups
+```bash
+bm backup --verify ~/.bm/backups/chrome-work-20261027120000.tar.zst
+bm backup work --encrypt                    # encrypted at rest (age format, tar → zstd → age)
+BM_BACKUP_PASSPHRASE=... bm backup --all --encrypt   # non-interactive runs
+```
+`--verify` validates an archive **without extracting it**: the zstd frame must decode in full, every tar entry must be readable, and the embedded manifest (profile, browser, creating bm version, proxy) must parse. Encrypted archives are decrypted in-stream during verification.
+
+**Encryption threat model, stated plainly:** archives contain your full login state, so `--encrypt` seals them with age v1 (scrypt passphrase recipient). The passphrase comes from `BM_BACKUP_PASSPHRASE` or a hidden prompt — it is **never accepted on the command line**. bm does **no key management**: the passphrase is the only key, a lost passphrase means a lost backup, and only the passphrase holder can restore. `bm restore` and `bm backup --verify` detect encrypted archives (`.tar.zst.age`) automatically and prompt/decrypt on the fly; plain and encrypted snapshots share the same `--keep` retention pool.
+
+#### Scheduled Auto-Backup
+Install a daily `bm backup --all` via launchd (macOS) or a systemd user timer (Linux):
+```bash
+bm backup --schedule install --keep 7    # daily at 03:00, per selected --browser
+bm backup --schedule status
+bm backup --schedule uninstall
+```
+The schedule refuses to install twice; logs go to `~/.bm/backup.log` (launchd) or `journalctl --user -u bm-backup-<browser>` (systemd). Test the unit manually with `bm backup --all --keep 7` — that is exactly the command the timer runs.
+
+### CDP Access for Agents (`bm open --cdp`)
+Hand agent tooling (Playwright, Puppeteer, browser-use, chrome-remote-interface) a browser with **real sessions and real egress identity** instead of a fresh incognito instance — bm profiles are the identity layer:
+```bash
+bm open agent-work --cdp
+# Warning: --cdp hands FULL control of this browser (sessions, cookies, everything)
+# to anyone who can reach the endpoint — loopback only.
+# Success: Launched Google Chrome profile 'agent-work' — global default profile unchanged.
+# CDP endpoint: ws://127.0.0.1:51234/devtools/browser/8f2a...
+```
+* **Strictly opt-in, every time**: CDP is enabled only when the exact launch carries `--cdp`. Shortcuts, managed policy, and every other bm path never add debugging flags.
+* **No fixed ports, ever**: launches use `--remote-debugging-port=0` (OS-assigned) and bm discovers the real port from `DevToolsActivePort` inside the profile dir — collision-free by construction.
+* **Loopback only**: launches pin `--remote-debugging-address=127.0.0.1`. Endpoints are persisted in `~/.bm/cdp.json` with mode 0600.
+* **Singleton-safe**: re-running `bm open <name> --cdp` on a running profile returns the live endpoint instead of spawning a duplicate; a profile already running *without* `--cdp` is reported (a re-launch cannot enable debugging on a running instance).
+* Chrome 136+ restricts debugging on the *default* user-data-dir — bm profiles are custom dirs, so this is compliant.
+
+Inspect and close:
+```bash
+bm cdp status                 # live endpoints (dead entries purged)
+bm cdp close agent-work       # graceful shutdown via the CDP Browser.close method
+```
+
+#### Connecting from Agent Tooling
+```python
+# Playwright (Python) — full browser, real logins, profile's egress proxy
+browser = playwright.chromium.connect_over_cdp("ws://127.0.0.1:51234/devtools/browser/…")
+```
+```javascript
+// Puppeteer
+const browser = await puppeteer.connect({ browserWSEndpoint: "ws://127.0.0.1:51234/devtools/browser/…" });
+```
+```javascript
+// chrome-remote-interface
+const CDP = require('chrome-remote-interface');
+const client = await CDP({ webSocketDebuggerUrl: "ws://127.0.0.1:51234/devtools/browser/…" });
+```
+**Use a dedicated bm profile for agent work** (e.g. `bm create agent-work`). The agent sees and can do everything every session in that profile can — keep your personal logins out of it.
+
+### Status At A Glance
+One read-only command that answers "what is bm doing right now?" for the selected browser — no browser launch, fast enough to alias:
+```bash
+bm status
+```
+Shows the active profile (including external/unmanaged activations), which profiles have a live browser process and its pid (via the Chromium `SingletonLock`), each profile's egress proxy, the newest backup per profile (timestamp, size, `age` marker when encrypted), and any open `bm doctor` findings with severity.
 
 ### Health Audit
 Audit the bm-managed state for common problems — dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:
@@ -209,6 +276,28 @@ bm delete old-profile
 bm delete test-profile --yes   # Skip confirmation prompt
 ```
 
+### Built-in MCP Server (`bm mcp`)
+`bm mcp` runs a Model Context Protocol server over stdio (v1 transport), giving agent hosts schema-driven access to bm without shell access. It is a thin wrapper over the same modules the CLI uses — the running-browser and active-profile guards apply unchanged — and returns the same JSON shapes documented in docs/json.md.
+
+Tools: `list_profiles`, `current`, `status`, `open_profile` (name, browser, urls, `cdp` — CDP stays strictly opt-in per call), `switch` (force), `proxy_get`, `proxy_set`, `proxy_clear`, `backup`. No destructive tools (delete is deliberately not exposed).
+
+Register it in your MCP host config:
+```json
+{
+  "mcpServers": {
+    "bm": { "command": "bm", "args": ["mcp"] }
+  }
+}
+```
+This snippet works for Claude Desktop (`claude_desktop_config.json`), Cursor (`mcp.json`), and ZCode. For Task Weaver: `tw mcp register-local bm -- bm mcp`. stdout carries only JSON-RPC frames; warnings go to stderr.
+
+### Scriptable JSON Output
+`bm --json` gives every read-oriented command a stable, documented JSON form (human output is untouched): `list`, `current`, `doctor`, `proxy show`, `status`, and `size`. The shapes are pinned by golden tests and versioned in [docs/json.md](docs/json.md) — external tooling and `bm mcp` (v1) rely on them verbatim:
+```bash
+bm --json status | jq '.profiles[] | select(.running) | .name'
+bm --json list --browser edge | jq '.profiles[].name'
+```
+
 ### Shell Completions
 Generate completions from the live CLI definition (stays in sync with every subcommand and flag):
 ```bash
@@ -221,6 +310,13 @@ bm completions zsh > ~/.zfunc/_bm   # ensure ~/.zfunc is in $fpath before compin
 # fish
 bm completions fish > ~/.config/fish/completions/bm.fish
 ```
+
+### Man Page
+`bm(1)` is generated from the same CLI definition (clap_mangen) and ships in every release archive:
+```bash
+bm manpage | sudo tee /usr/local/share/man/man1/bm.1 >/dev/null   # then: man bm
+```
+Release tarballs contain `bm.1`; copy it into any directory on your `manpath` (e.g. `/usr/local/share/man/man1/` or `~/.local/share/man/man1/`).
 
 ---
 

@@ -22,7 +22,13 @@ inquire = "0.7"
 clap_complete = "4.5"
 tar = "0.4"
 zstd = "0.13"
+age = "0.12.1"
+clap_mangen = "0.3.3"
+tungstenite = "0.30.0"
+rmcp = { version = "3.8.0", features = ["server", "transport-io"] }
+tokio = { version = "1.54.1", features = ["rt", "io-std", "time"] }
 
 [dev-dependencies]
+serde_json = "1.0"
 tempfile = "3.17"
 

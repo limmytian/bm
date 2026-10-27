@@ -36,8 +36,7 @@ impl HttpFetcher for UreqFetcher {
     ) -> std::result::Result<String, String> {
         let mut builder = ureq::AgentBuilder::new().timeout(timeout);
         if let Some(proxy) = proxy_server {
-            let p =
-                ureq::Proxy::new(proxy).map_err(|e| format!("invalid proxy '{proxy}': {e}"))?;
+            let p = ureq::Proxy::new(proxy).map_err(|e| format!("invalid proxy '{proxy}': {e}"))?;
             builder = builder.proxy(p);
         }
         let resp = builder
@@ -212,7 +211,12 @@ mod tests {
             ],
             calls: RefCell::new(vec![]),
         };
-        let check = check_egress(&mock, "https://api.ipify.org", &proxy(), Duration::from_secs(5));
+        let check = check_egress(
+            &mock,
+            "https://api.ipify.org",
+            &proxy(),
+            Duration::from_secs(5),
+        );
         assert_eq!(check.exit_ip.as_deref(), Some("203.0.113.7"));
         assert_eq!(check.direct_ip.as_deref(), Some("198.51.100.2"));
         assert_eq!(check.effective, Some(true));
@@ -236,7 +240,12 @@ mod tests {
             ],
             calls: RefCell::new(vec![]),
         };
-        let check = check_egress(&mock, "https://api.ipify.org", &proxy(), Duration::from_secs(5));
+        let check = check_egress(
+            &mock,
+            "https://api.ipify.org",
+            &proxy(),
+            Duration::from_secs(5),
+        );
         assert_eq!(check.effective, Some(false));
     }
 
@@ -252,7 +261,12 @@ mod tests {
             ],
             calls: RefCell::new(vec![]),
         };
-        let check = check_egress(&mock, "https://api.ipify.org", &proxy(), Duration::from_secs(5));
+        let check = check_egress(
+            &mock,
+            "https://api.ipify.org",
+            &proxy(),
+            Duration::from_secs(5),
+        );
         assert!(!check.through_ok);
         assert_eq!(check.exit_ip, None);
         assert_eq!(check.effective, None, "no comparison possible");
@@ -266,7 +280,12 @@ mod tests {
             responses: vec![(Some("socks5://10.0.0.1:1080".into()), Ok(long))],
             calls: RefCell::new(vec![]),
         };
-        let check = check_egress(&mock, "https://api.ipify.org", &proxy(), Duration::from_secs(5));
+        let check = check_egress(
+            &mock,
+            "https://api.ipify.org",
+            &proxy(),
+            Duration::from_secs(5),
+        );
         assert_eq!(check.exit_ip.unwrap().len(), 512);
     }
 

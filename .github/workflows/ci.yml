@@ -13,6 +13,9 @@ on:
       - '**.md'
       - 'assets/**'
       - 'LICENSE'
+  schedule:
+    # Weekly RustSec sweep (cargo audit job below) — Monday 06:20 UTC.
+    - cron: '20 6 * * 1'
 
 jobs:
   test:
@@ -25,8 +28,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
       - name: Run tests
         run: cargo test --verbose
       - name: Run clippy
         run: cargo clippy -- -D warnings
+
+  audit:
+    name: Security audit (RustSec)
+    runs-on: ubuntu-latest
+    # Non-blocking by design for now: ureq/tar/zstd parse network and
+    # archive input, so advisories against them must surface — but a new
+    # advisory should not red every PR until it is triaged. Flip
+    # continue-on-error to false once an ignore-list policy is in place.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Run cargo audit
+        run: cargo audit

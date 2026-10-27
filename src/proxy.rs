@@ -1,5 +1,5 @@
-use std::fmt;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::error::{BmError, Result};
 
@@ -116,7 +116,10 @@ impl ProxyConfig {
         if host.is_empty() {
             return Err(invalid_proxy("host is empty"));
         }
-        if host.chars().any(|c| c.is_whitespace() || c == '/' || c == '\\' || c == '@') {
+        if host
+            .chars()
+            .any(|c| c.is_whitespace() || c == '/' || c == '\\' || c == '@')
+        {
             return Err(invalid_proxy(format!("invalid host '{host}'")));
         }
         Ok(())
@@ -181,9 +184,11 @@ mod tests {
 
     #[test]
     fn parse_bypass_list() {
-        let p =
-            ProxyConfig::parse("http://p:8080", Some("localhost, 127.0.0.1 ; *.corp.example,"))
-                .unwrap();
+        let p = ProxyConfig::parse(
+            "http://p:8080",
+            Some("localhost, 127.0.0.1 ; *.corp.example,"),
+        )
+        .unwrap();
         assert_eq!(
             p.bypass_string(),
             Some("localhost,127.0.0.1,*.corp.example".to_string())
