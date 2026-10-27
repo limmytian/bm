@@ -108,10 +108,15 @@ fn test_brave_and_chromium_data_dirs() {
         .profile_dir(Browser::Brave, "sandbox")
         .starts_with(tmp.path().join(".bm/profiles/brave")));
 
-    // Not-installed browsers fail gracefully with the bundle path named.
+    // Not-installed browsers fail gracefully: on macOS the error names the
+    // missing bundle path; elsewhere it is a platform error.
     if let Err(e) = Browser::Brave.app_path() {
-        let msg = e.to_string();
-        assert!(msg.contains("Brave Browser.app"), "unhelpful error: {msg}");
+        if cfg!(target_os = "macos") {
+            let msg = e.to_string();
+            assert!(msg.contains("Brave Browser.app"), "unhelpful error: {msg}");
+        } else {
+            assert!(e.to_string().contains("Platform unsupported"));
+        }
     }
 }
 
