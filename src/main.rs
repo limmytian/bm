@@ -15,6 +15,7 @@ mod proxy_test;
 mod report;
 mod running;
 mod schedule;
+mod session;
 mod shortcut;
 mod size;
 mod status;
@@ -28,7 +29,8 @@ use std::io::{self, Write};
 
 use crate::browser::Browser;
 use crate::cli::{
-    CdpAction, Cli, Commands, GroupAction, LeaseAction, ProxyAction, ScheduleAction, TemplateAction,
+    CdpAction, Cli, Commands, GroupAction, LeaseAction, ProxyAction, ScheduleAction, SessionAction,
+    TemplateAction,
 };
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
@@ -1513,6 +1515,140 @@ fn run(cli: Cli) -> Result<()> {
                             l.expires_at.to_rfc3339().dimmed(),
                             reason_str
                         );
+                    }
+                }
+            },
+
+            Commands::Session { action } => match action {
+                SessionAction::Export {
+                    profile,
+                    domain,
+                    out,
+                    raw,
+                    encrypt,
+                } => {
+                    let bundle = session::export_session(&storage, browser, &profile, &domain)?;
+
+                    let passphrase = if encrypt {
+                        use age::secrecy::ExposeSecret;
+                        Some(
+                            crate::backup::read_passphrase(true)?
+                                .expose_secret()
+                                .to_string(),
+                        )
+                    } else {
+                        None
+                    };
+
+                    if let Some(ref out_path) = out {
+                        session::save_session_bundle(&bundle, out_path, passphrase.as_deref())?;
+                        let enc_label = if encrypt { " (age encrypted)" } else { "" };
+                        println!(
+                            "{} Exported {} cookie(s) for '{}' from profile '{}' ({}) to {} (permissions 0600{}).",
+                            "Success:".green().bold(),
+                            bundle.cookies.len(),
+                            bundle.domain.cyan(),
+                            bundle.profile.bold(),
+                            browser.display_name().cyan(),
+                            out_path.display().to_string().bold(),
+                            enc_label
+                        );
+                    }
+
+                    if cli.json {
+                        let json_val = if raw {
+                            serde_json::to_value(&bundle)?
+                        } else {
+                            let masked_cookies: Vec<_> = bundle
+                                .cookies
+                                .iter()
+                                .map(|c| {
+                                    serde_json::json!({
+                                        "name": c.name,
+                                        "domain": c.domain,
+                                        "path": c.path,
+                                        "value": c.masked_value(),
+                                        "expires_utc": c.expires_utc,
+                                        "is_secure": c.is_secure,
+                                        "is_httponly": c.is_httponly,
+                                        "samesite": c.samesite,
+                                    })
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "version": bundle.version,
+                                "browser": bundle.browser,
+                                "profile": bundle.profile,
+                                "domain": bundle.domain,
+                                "exported_at": bundle.exported_at,
+                                "cookies": masked_cookies,
+                                "note": "Values masked for security; pass --raw to display unmasked values"
+                            })
+                        };
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                        return Ok(());
+                    }
+
+                    if out.is_none() || raw {
+                        if bundle.cookies.is_empty() {
+                            println!(
+                                "No cookies found for domain '{}' in profile '{}' ({}).",
+                                bundle.domain.cyan(),
+                                bundle.profile.bold(),
+                                browser.display_name().cyan()
+                            );
+                            return Ok(());
+                        }
+
+                        println!(
+                            "{}: profile '{}' ({}) | domain '{}' ({} found)",
+                            "Session Cookies".bold(),
+                            bundle.profile.bold(),
+                            browser.display_name().cyan(),
+                            bundle.domain.cyan(),
+                            bundle.cookies.len()
+                        );
+                        if !raw {
+                            println!(
+                                "{}",
+                                "Note: Sensitive cookie values masked by default. Use --raw to display plaintext."
+                                    .dimmed()
+                            );
+                        }
+                        println!(
+                            "  {:<24} {:<24} {:<24} {}",
+                            "NAME".bold(),
+                            "VALUE".bold(),
+                            "DOMAIN".bold(),
+                            "FLAGS".bold()
+                        );
+                        println!("  {}", "-".repeat(85).dimmed());
+                        for c in &bundle.cookies {
+                            let val_str = if raw {
+                                c.value.clone()
+                            } else {
+                                c.masked_value()
+                            };
+                            let mut flags = Vec::new();
+                            if c.is_secure {
+                                flags.push("Secure");
+                            }
+                            if c.is_httponly {
+                                flags.push("HttpOnly");
+                            }
+                            let flags_str = if flags.is_empty() {
+                                "-".dimmed().to_string()
+                            } else {
+                                flags.join(", ")
+                            };
+                            println!(
+                                "  {:<24} {:<24} {:<24} {}",
+                                c.name.bold(),
+                                val_str,
+                                c.domain.dimmed(),
+                                flags_str.cyan()
+                            );
+                        }
                     }
                 }
             },

@@ -129,6 +129,7 @@ fn mcp_handshake_lists_the_full_tool_catalog() {
         "proxy_set",
         "proxy_clear",
         "backup",
+        "export_session",
     ] {
         assert!(
             names.contains(&expected),

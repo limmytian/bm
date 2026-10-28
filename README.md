@@ -214,6 +214,27 @@ bm lease release work-1 --holder "agent-scraper-01"
 * **Dead PID detection**: Stale leases whose holding process has exited are automatically considered inactive.
 * **Persistent & Private**: Stored under `~/.bm/leases.json` with strict 0600 file permissions.
 
+### Scoped Session & Cookie Export (`bm session export`)
+Securely export decrypted session cookies for a specific domain using OS Keychain / Secret Service:
+```bash
+# Export cookies for a concrete domain (masked by default on stdout)
+bm session export work-1 --domain github.com
+
+# Export to a secure file (0600 permissions strictly enforced)
+bm session export work-1 --domain github.com --out ~/session.json
+
+# View raw unmasked values explicitly on stdout
+bm session export work-1 --domain github.com --raw
+
+# Encrypt output bundle using an age passphrase
+bm session export work-1 --domain github.com --out ~/session.age --encrypt
+```
+* **Mandatory domain scoping**: Wildcards (`*`, `%`, empty) are strictly prohibited; only cookies matching the specified domain or its subdomains are extracted.
+* **Safe by default**: Output to terminal stdout masks sensitive cookie values unless `--raw` is explicitly passed.
+* **0600 Permission enforcement**: Output files are created with private permissions (`0600`).
+* **Transport encryption**: Supports age passphrase encryption for safe transfer across environments.
+* **MCP Integration**: Available as the `export_session` tool with security gatekeeping.
+
 ### Show Disk Usage (Cache vs Core)
 Per-profile byte accounting, split into regenerable cache and valuable core data:
 ```bash

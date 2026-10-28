@@ -429,3 +429,86 @@ fn test_lease_locking_and_switch_guard() {
     storage.switch_profile("target-p2", browser, false).unwrap();
     assert!(storage.delete_profile("locked-p1", browser).is_ok());
 }
+
+#[test]
+fn test_session_export_and_guardrails() {
+    use bm::session::{
+        derive_key, encrypt_mock_cookie, extract_scoped_cookies, save_session_bundle,
+        validate_domain, SessionBundle,
+    };
+    use rusqlite::Connection;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    // 1. Wildcard domains are strictly rejected
+    assert!(validate_domain("").is_err());
+    assert!(validate_domain("*").is_err());
+    assert!(validate_domain("*.slack.com").is_err());
+    assert!(validate_domain("slack.*").is_err());
+    assert!(validate_domain("%").is_err());
+    assert!(validate_domain(".").is_err());
+
+    // 2. Concrete domains accepted
+    assert_eq!(validate_domain("slack.com").unwrap(), "slack.com");
+    assert_eq!(validate_domain(".slack.com").unwrap(), ".slack.com");
+
+    // 3. Mock profile with Cookies SQLite database
+    let tmp = tempdir().unwrap();
+    let db_path = tmp.path().join("Cookies");
+    let conn = Connection::open(&db_path).unwrap();
+    conn.execute(
+        "CREATE TABLE cookies (
+            host_key TEXT NOT NULL,
+            name TEXT NOT NULL,
+            value TEXT NOT NULL,
+            encrypted_value BLOB DEFAULT '',
+            path TEXT NOT NULL,
+            expires_utc INTEGER NOT NULL,
+            is_secure INTEGER NOT NULL,
+            is_httponly INTEGER NOT NULL,
+            samesite INTEGER NOT NULL DEFAULT -1
+        )",
+        [],
+    )
+    .unwrap();
+
+    let key = derive_key("test-secret", 1);
+    let cookie_enc_target = encrypt_mock_cookie("d-cookie-val-12345", &key);
+    let cookie_enc_other = encrypt_mock_cookie("other-val-67890", &key);
+
+    conn.execute(
+        "INSERT INTO cookies VALUES (?1, ?2, '', ?3, '/', 1800000000, 1, 1, 1)",
+        rusqlite::params![".app.slack.com", "d", cookie_enc_target],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO cookies VALUES (?1, ?2, '', ?3, '/', 1800000000, 1, 1, 1)",
+        rusqlite::params![".discord.com", "token", cookie_enc_other],
+    )
+    .unwrap();
+
+    // 4. Scoped extraction only extracts target domain
+    let cookies = extract_scoped_cookies(&db_path, "slack.com", &key).unwrap();
+    assert_eq!(cookies.len(), 1);
+    assert_eq!(cookies[0].name, "d");
+    assert_eq!(cookies[0].value, "d-cookie-val-12345");
+    assert!(cookies[0].masked_value().starts_with("d-c***"));
+
+    // 5. File export enforces 0600 permissions
+    let bundle = SessionBundle {
+        version: 1,
+        browser: Browser::Chrome,
+        profile: "work-profile".into(),
+        domain: "slack.com".into(),
+        exported_at: chrono::Utc::now(),
+        cookies,
+    };
+
+    let out_file = tmp.path().join("session_out.json");
+    save_session_bundle(&bundle, &out_file, None).unwrap();
+    #[cfg(unix)]
+    {
+        let meta = std::fs::metadata(&out_file).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    }
+}

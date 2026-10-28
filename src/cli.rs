@@ -309,9 +309,40 @@ pub enum Commands {
         action: LeaseAction,
     },
 
+    /// Manage profile session credentials with strict security boundaries
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+
     /// Internal worker to watch a process and purge its temp directory on exit
     #[command(name = "__watch_temp", hide = true)]
     WatchTemp { pid: u32, path: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionAction {
+    /// Export cookies strictly scoped to a specified domain
+    Export {
+        /// Profile whose session cookies to export
+        profile: String,
+
+        /// Concrete target domain to export cookies for (wildcards prohibited, e.g. github.com)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Output file path (enforced with 0600 permissions)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+
+        /// Display raw unmasked cookie values on stdout (default: masked to prevent leakage)
+        #[arg(long)]
+        raw: bool,
+
+        /// Encrypt the export bundle using an age passphrase
+        #[arg(long)]
+        encrypt: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

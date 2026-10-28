@@ -136,6 +136,12 @@ fn tool_definitions() -> Vec<Tool> {
             "keep": {"type": "integer", "minimum": 1, "description": "Keep only the N newest backups of this profile"},
             "full": {"type": "boolean", "description": "Include regenerable caches"}
         }}), &["name"])),
+        Tool::new("export_session", "Export session cookies strictly scoped to a concrete domain (wildcards prohibited). Sensitive values are masked by default unless allow_raw=true is explicitly requested", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile to export cookies from"},
+            "domain": {"type": "string", "description": "Target domain (mandatory, wildcards like '*' prohibited, e.g. 'github.com')"},
+            "browser": browser_enum,
+            "allow_raw": {"type": "boolean", "description": "Explicitly allow unmasked plaintext cookie values (requires security authorization)"}
+        }}), &["name", "domain"])),
     ]
 }
 
@@ -305,6 +311,58 @@ async fn dispatch_tool(server: &BmMcpServer, name: &str, args: Value) -> Result<
                     "profile_bytes": outcome.profile_bytes,
                     "pruned": outcome.pruned,
                 }))
+            })
+            .await
+        }
+        "export_session" => {
+            let browser = pick_browser(server, &args)?;
+            let profile = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument 'name'".into()))?
+                .to_string();
+            let domain = args
+                .get("domain")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument 'domain'".into()))?
+                .to_string();
+            let allow_raw = args
+                .get("allow_raw")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let bundle = crate::session::export_session(&storage, browser, &profile, &domain)?;
+                if allow_raw {
+                    Ok(serde_json::to_value(&bundle)?)
+                } else {
+                    let masked_cookies: Vec<_> = bundle
+                        .cookies
+                        .iter()
+                        .map(|c| {
+                            json!({
+                                "name": c.name,
+                                "domain": c.domain,
+                                "path": c.path,
+                                "value": c.masked_value(),
+                                "expires_utc": c.expires_utc,
+                                "is_secure": c.is_secure,
+                                "is_httponly": c.is_httponly,
+                                "samesite": c.samesite,
+                            })
+                        })
+                        .collect();
+                    Ok(json!({
+                        "version": bundle.version,
+                        "browser": bundle.browser,
+                        "profile": bundle.profile,
+                        "domain": bundle.domain,
+                        "exported_at": bundle.exported_at,
+                        "cookies": masked_cookies,
+                        "note": "Values masked for security; set allow_raw=true to request plaintext"
+                    }))
+                }
             })
             .await
         }

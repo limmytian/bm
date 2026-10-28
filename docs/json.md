@@ -240,6 +240,32 @@ A bare array, one entry per profile:
 ]
 ```
 
+## `bm session export <profile> --domain <domain> --json`
+
+Masked values are returned by default for safety:
+```json
+{
+  "version": 1,
+  "browser": "chrome",
+  "profile": "work-1",
+  "domain": "github.com",
+  "exported_at": "2026-10-28T10:00:00Z",
+  "cookies": [
+    {
+      "name": "user_session",
+      "domain": ".github.com",
+      "path": "/",
+      "value": "gho*** (48 bytes)",
+      "expires_utc": 1800000000,
+      "is_secure": true,
+      "is_httponly": true,
+      "samesite": 1
+    }
+  ],
+  "note": "Values masked for security; pass --raw to display unmasked values"
+}
+```
+
 ## Versioning
 
 - Schema version 1: initial documented set (this file), bm 0.0.5+.

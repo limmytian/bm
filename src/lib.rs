@@ -15,6 +15,7 @@ pub mod proxy_test;
 pub mod report;
 pub mod running;
 pub mod schedule;
+pub mod session;
 pub mod shortcut;
 pub mod size;
 pub mod status;
