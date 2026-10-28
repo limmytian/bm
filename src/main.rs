@@ -5,6 +5,7 @@ mod cdp;
 mod cli;
 mod doctor;
 mod error;
+mod group;
 mod mcp;
 mod open;
 mod policy;
@@ -25,7 +26,9 @@ use colored::Colorize;
 use std::io::{self, Write};
 
 use crate::browser::Browser;
-use crate::cli::{CdpAction, Cli, Commands, ProxyAction, ScheduleAction, TemplateAction};
+use crate::cli::{
+    CdpAction, Cli, Commands, GroupAction, ProxyAction, ScheduleAction, TemplateAction,
+};
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
@@ -1074,6 +1077,314 @@ fn run(cli: Cli) -> Result<()> {
                         "Success:".green().bold(),
                         name.bold()
                     );
+                }
+            },
+
+            Commands::Group { action } => match action {
+                GroupAction::Create { name, note } => {
+                    let g = group::create_group(&storage, &name, note.as_deref())?;
+                    println!(
+                        "{} Created session group '{}'.",
+                        "Success:".green().bold(),
+                        g.name.bold()
+                    );
+                    if let Some(desc) = g.description {
+                        println!("  Description: {}", desc.dimmed());
+                    }
+                    println!(
+                        "Add members with: {}",
+                        format!("bm group add {} <profile> [--browser <b>]", g.name).green()
+                    );
+                }
+
+                GroupAction::Add {
+                    group,
+                    profile,
+                    browser: target_browser,
+                    url,
+                    proxy,
+                } => {
+                    let b = target_browser.unwrap_or(browser);
+                    let proxy_cfg = match proxy {
+                        Some(p) => Some(ProxyConfig::parse(&p, None)?),
+                        None => None,
+                    };
+                    let g = group::add_member(&storage, &group, b, &profile, url, proxy_cfg)?;
+                    println!(
+                        "{} Added '{}' ({}) to group '{}' ({} total members).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        b.display_name().cyan(),
+                        g.name.bold(),
+                        g.members.len()
+                    );
+                }
+
+                GroupAction::Remove {
+                    group,
+                    profile,
+                    browser: target_browser,
+                } => {
+                    let b = target_browser.unwrap_or(browser);
+                    let g = group::remove_member(&storage, &group, b, &profile)?;
+                    println!(
+                        "{} Removed '{}' ({}) from group '{}' ({} remaining).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        b.display_name().cyan(),
+                        g.name.bold(),
+                        g.members.len()
+                    );
+                }
+
+                GroupAction::Delete { name, yes } => {
+                    if !storage.groups_file().exists() {
+                        return Err(BmError::GroupNotFound { name });
+                    }
+                    if !yes && interactive {
+                        print!(
+                            "Are you sure you want to delete session group '{}'? [y/N]: ",
+                            name.yellow().bold()
+                        );
+                        io::stdout().flush()?;
+                        let mut response = String::new();
+                        io::stdin().read_line(&mut response)?;
+                        if !response.trim().eq_ignore_ascii_case("y") {
+                            println!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                    group::delete_group(&storage, &name)?;
+                    println!(
+                        "{} Deleted session group '{}'.",
+                        "Success:".green().bold(),
+                        name.bold()
+                    );
+                }
+
+                GroupAction::List => {
+                    let groups = group::list_groups(&storage)?;
+                    if cli.json {
+                        let val = serde_json::json!({
+                            "groups": groups,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&val)?);
+                        return Ok(());
+                    }
+                    if groups.is_empty() {
+                        println!(
+                            "No session groups found. Create one with '{}'.",
+                            "bm group create <name>".green()
+                        );
+                        return Ok(());
+                    }
+                    println!("{}:", "Session Groups".bold());
+                    println!(
+                        "  {:<18} {:<10} {}",
+                        "GROUP".bold(),
+                        "MEMBERS".bold(),
+                        "DESCRIPTION".bold()
+                    );
+                    println!("  {}", "-".repeat(60).dimmed());
+                    for g in groups {
+                        println!(
+                            "  {:<18} {:<10} {}",
+                            g.name.bold(),
+                            g.members.len(),
+                            g.description.as_deref().unwrap_or("-").dimmed()
+                        );
+                    }
+                }
+
+                GroupAction::Show { name } => {
+                    let g = group::get_group(&storage, &name)?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&g)?);
+                        return Ok(());
+                    }
+                    println!("Group: {}", g.name.bold().green());
+                    if let Some(desc) = g.description {
+                        println!("Description: {}", desc.dimmed());
+                    }
+                    println!("Members: ({})", g.members.len());
+                    if g.members.is_empty() {
+                        println!(
+                            "  {} No members in this group. Add with '{}'.",
+                            "-".dimmed(),
+                            format!("bm group add {} <profile>", g.name).green()
+                        );
+                        return Ok(());
+                    }
+                    println!(
+                        "  {:<14} {:<18} {:<24} {}",
+                        "BROWSER".bold(),
+                        "PROFILE".bold(),
+                        "PROXY".bold(),
+                        "URLS".bold()
+                    );
+                    println!("  {}", "-".repeat(70).dimmed());
+                    for m in g.members {
+                        let proxy_str = m
+                            .proxy
+                            .map(|p| p.to_string())
+                            .or_else(|| {
+                                storage
+                                    .proxy_for(m.browser, &m.profile)
+                                    .map(|p| format!("{} (inherited)", p))
+                            })
+                            .unwrap_or_else(|| "-".dimmed().to_string());
+                        let urls_str = if m.urls.is_empty() {
+                            "-".dimmed().to_string()
+                        } else {
+                            m.urls.join(", ")
+                        };
+                        println!(
+                            "  {:<14} {:<18} {:<24} {}",
+                            m.browser.display_name().cyan(),
+                            m.profile.bold(),
+                            proxy_str,
+                            urls_str
+                        );
+                    }
+                }
+
+                GroupAction::Status { name } => {
+                    let reports = match name {
+                        Some(ref n) => vec![group::status_group(&storage, n)?],
+                        None => group::status_all_groups(&storage)?,
+                    };
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&reports)?);
+                        return Ok(());
+                    }
+                    if reports.is_empty() {
+                        println!(
+                            "No session groups found. Create one with '{}'.",
+                            "bm group create <name>".green()
+                        );
+                        return Ok(());
+                    }
+                    println!("{}:", "Group Runtime Status".bold());
+                    for r in reports {
+                        println!(
+                            "\nGroup: {} ({} of {} running)",
+                            r.name.bold().green(),
+                            r.running_count.to_string().cyan(),
+                            r.member_count
+                        );
+                        if let Some(desc) = r.description {
+                            println!("  Description: {}", desc.dimmed());
+                        }
+                        if r.members.is_empty() {
+                            println!("  {} No members.", "-".dimmed());
+                            continue;
+                        }
+                        println!(
+                            "  {:<14} {:<18} {:<12} {:<10} {:<20} {}",
+                            "BROWSER".bold(),
+                            "PROFILE".bold(),
+                            "STATUS".bold(),
+                            "PID".bold(),
+                            "PROXY".bold(),
+                            "CDP".bold()
+                        );
+                        println!("  {}", "-".repeat(85).dimmed());
+                        for m in r.members {
+                            let status_str = if m.running {
+                                "running".green().bold().to_string()
+                            } else {
+                                "stopped".dimmed().to_string()
+                            };
+                            let pid_str = m
+                                .pid
+                                .map(|p| p.to_string())
+                                .unwrap_or_else(|| "-".dimmed().to_string());
+                            let proxy_str = m.proxy.unwrap_or_else(|| "-".dimmed().to_string());
+                            let cdp_str =
+                                m.cdp_endpoint.unwrap_or_else(|| "-".dimmed().to_string());
+                            println!(
+                                "  {:<14} {:<18} {:<12} {:<10} {:<20} {}",
+                                m.browser.display_name().cyan(),
+                                m.profile.bold(),
+                                status_str,
+                                pid_str,
+                                proxy_str,
+                                cdp_str
+                            );
+                        }
+                    }
+                }
+
+                GroupAction::Open { name, urls, cdp } => {
+                    if cdp {
+                        println!(
+                            "{} --cdp hands FULL control of all launched group browser instances — loopback only.",
+                            "Warning:".yellow().bold()
+                        );
+                    }
+                    let report = group::open_group(&storage, &name, &urls, cdp)?;
+                    println!(
+                        "{} Launching group '{}' ({} members):",
+                        "Group:".bold(),
+                        report.group.green().bold(),
+                        report.members.len()
+                    );
+                    for m in &report.members {
+                        match &m.error {
+                            None => {
+                                let pid_str =
+                                    m.pid.map(|p| format!("(pid {})", p)).unwrap_or_default();
+                                println!(
+                                    "  {} {}/{} {} spawned detached.",
+                                    "ok".green().bold(),
+                                    m.browser.display_name().cyan(),
+                                    m.profile.bold(),
+                                    pid_str.dimmed()
+                                );
+                                if let Some(endpoint) = &m.cdp_endpoint {
+                                    println!("    CDP endpoint: {}", endpoint.cyan().bold());
+                                }
+                            }
+                            Some(err) => {
+                                println!(
+                                    "  {} {}/{} — {}",
+                                    "fail".red().bold(),
+                                    m.browser.display_name().cyan(),
+                                    m.profile.bold(),
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+
+                GroupAction::Close { name, force } => {
+                    let report = group::close_group(&storage, &name, force)?;
+                    println!(
+                        "{} Closing group '{}' ({} members):",
+                        "Group:".bold(),
+                        report.group.green().bold(),
+                        report.members.len()
+                    );
+                    for m in &report.members {
+                        if m.success {
+                            println!(
+                                "  {} {}/{} — closed ({})",
+                                "ok".green().bold(),
+                                m.browser.display_name().cyan(),
+                                m.profile.bold(),
+                                m.method.dimmed()
+                            );
+                        } else {
+                            println!(
+                                "  {} {}/{} — {}",
+                                "fail".red().bold(),
+                                m.browser.display_name().cyan(),
+                                m.profile.bold(),
+                                m.error.as_deref().unwrap_or("failed to close")
+                            );
+                        }
+                    }
                 }
             },
 

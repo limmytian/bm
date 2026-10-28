@@ -295,3 +295,75 @@ fn test_template_lifecycle_and_seeding_new_profile() {
     delete_template(&storage, "dev-box").unwrap();
     assert!(list_templates(&storage, Some(browser)).unwrap().is_empty());
 }
+
+#[test]
+fn test_group_lifecycle_and_management() {
+    use bm::group::{
+        add_member, create_group, delete_group, get_group, list_groups, remove_member, status_group,
+    };
+    use bm::proxy::ProxyConfig;
+
+    let tmp = tempdir().unwrap();
+    let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
+
+    // 1. Create profiles
+    storage
+        .create_profile("chrome-work", Some("Work on Chrome"), Browser::Chrome)
+        .unwrap();
+    storage
+        .create_profile("edge-ops", Some("Ops on Edge"), Browser::Edge)
+        .unwrap();
+
+    // 2. Create group
+    let group = create_group(&storage, "work-suite", Some("Company work suite")).unwrap();
+    assert_eq!(group.name, "work-suite");
+    assert_eq!(group.members.len(), 0);
+
+    // 3. Add members across browsers
+    let updated = add_member(
+        &storage,
+        "work-suite",
+        Browser::Chrome,
+        "chrome-work",
+        vec!["https://jira.example.com".into()],
+        None,
+    )
+    .unwrap();
+    assert_eq!(updated.members.len(), 1);
+
+    let proxy = ProxyConfig::parse("socks5://10.0.0.1:1080", None).unwrap();
+    let updated = add_member(
+        &storage,
+        "work-suite",
+        Browser::Edge,
+        "edge-ops",
+        vec!["https://grafana.example.com".into()],
+        Some(proxy),
+    )
+    .unwrap();
+    assert_eq!(updated.members.len(), 2);
+
+    // 4. Query group and status
+    let loaded = get_group(&storage, "work-suite").unwrap();
+    assert_eq!(loaded.members.len(), 2);
+    assert_eq!(loaded.members[0].profile, "chrome-work");
+    assert_eq!(loaded.members[1].profile, "edge-ops");
+
+    let status = status_group(&storage, "work-suite").unwrap();
+    assert_eq!(status.member_count, 2);
+    assert_eq!(status.running_count, 0);
+
+    let all = list_groups(&storage).unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].name, "work-suite");
+
+    // 5. Remove member
+    let after_remove =
+        remove_member(&storage, "work-suite", Browser::Chrome, "chrome-work").unwrap();
+    assert_eq!(after_remove.members.len(), 1);
+    assert_eq!(after_remove.members[0].profile, "edge-ops");
+
+    // 6. Delete group
+    delete_group(&storage, "work-suite").unwrap();
+    assert!(list_groups(&storage).unwrap().is_empty());
+}

@@ -143,6 +143,10 @@ impl StorageManager {
         self.base_dir.join("metadata.json")
     }
 
+    pub fn groups_file(&self) -> PathBuf {
+        self.base_dir.join("groups.json")
+    }
+
     pub fn state_file(&self) -> PathBuf {
         self.base_dir.join("state.json")
     }

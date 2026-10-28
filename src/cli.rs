@@ -297,9 +297,111 @@ pub enum Commands {
         action: TemplateAction,
     },
 
+    /// Manage multi-profile workspaces and session groups
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+
     /// Internal worker to watch a process and purge its temp directory on exit
     #[command(name = "__watch_temp", hide = true)]
     WatchTemp { pid: u32, path: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GroupAction {
+    /// Create a new session group
+    Create {
+        /// Name of the group
+        name: String,
+
+        /// Optional note or description for the group
+        #[arg(short, long)]
+        note: Option<String>,
+    },
+
+    /// Add a profile to a session group
+    Add {
+        /// Name of the group
+        group: String,
+
+        /// Profile to add
+        profile: String,
+
+        /// Browser of the profile (defaults to global --browser)
+        #[arg(short, long)]
+        browser: Option<Browser>,
+
+        /// URLs to associate with this member
+        #[arg(short, long)]
+        url: Vec<String>,
+
+        /// Optional egress proxy override for this member
+        #[arg(short, long)]
+        proxy: Option<String>,
+    },
+
+    /// Remove a profile from a session group
+    Remove {
+        /// Name of the group
+        group: String,
+
+        /// Profile to remove
+        profile: String,
+
+        /// Browser of the profile (defaults to global --browser)
+        #[arg(short, long)]
+        browser: Option<Browser>,
+    },
+
+    /// Delete a session group
+    Delete {
+        /// Name of the group
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// List all session groups
+    List,
+
+    /// Show detailed configuration of a session group
+    Show {
+        /// Name of the group
+        name: String,
+    },
+
+    /// Show live runtime status (running instances, CDP ports, proxies) of groups
+    Status {
+        /// Optional group name; omit to show all groups
+        name: Option<String>,
+    },
+
+    /// Launch all member profiles of a group concurrently side by side
+    Open {
+        /// Name of the group to open
+        name: String,
+
+        /// Additional URLs to open across members
+        #[arg(value_name = "URL")]
+        urls: Vec<String>,
+
+        /// Enable CDP debugging for all launched member profiles
+        #[arg(long)]
+        cdp: bool,
+    },
+
+    /// Gracefully close all running browser instances in a group
+    Close {
+        /// Name of the group to close
+        name: String,
+
+        /// Force termination if graceful shutdown fails or times out
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

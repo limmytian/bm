@@ -170,6 +170,26 @@ bm open --temp --cdp
 * Optionally pre-seeded from a template bundle (`--template <tpl>`).
 * Supports `--cdp` for automated disposable browser agent runs.
 
+### Multi-Profile Workspaces & Session Groups (`bm group`)
+Manage and orchestrate clusters of browser profiles across browsers (Chrome, Edge, Brave, Chromium) as coherent workspaces:
+```bash
+# Manage groups and memberships
+bm group create work-suite --note "Daily engineering workspace"
+bm group add work-suite work-main --url https://mail.google.com
+bm group add work-suite ops-edge --browser edge --proxy socks5://127.0.0.1:1080 --url https://grafana.internal
+bm group list
+bm group show work-suite
+
+# Orchestrate concurrent lifecycles
+bm group open work-suite          # launch all member profiles side by side in parallel
+bm group status work-suite        # inspect live running instances, PIDs, and CDP endpoints
+bm group close work-suite         # graceful multi-process teardown (via CDP / SIGTERM)
+bm group close work-suite --force # force kill if processes refuse to exit
+```
+* **Concurrent parallel launch**: `bm group open` launches every member profile detached with its own isolated directory, member-level proxy overrides, and designated startup URLs.
+* **Graceful multi-process shutdown**: `bm group close` coordinates targeted teardown across browsers, trying CDP `Browser.close` first, then SIGTERM, and only SIGKILL upon `--force`.
+* **Scriptable inspection**: `bm group list --json` and `bm group status --json` output machine-readable statuses for agent orchestration.
+
 ### Show Disk Usage (Cache vs Core)
 Per-profile byte accounting, split into regenerable cache and valuable core data:
 ```bash

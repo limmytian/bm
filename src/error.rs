@@ -14,6 +14,19 @@ pub enum BmError {
     #[error("Template '{name}' not found.")]
     TemplateNotFound { name: String },
 
+    #[error("Group '{name}' already exists.")]
+    GroupAlreadyExists { name: String },
+
+    #[error("Group '{name}' not found.")]
+    GroupNotFound { name: String },
+
+    #[error("Profile '{profile}' for {browser} is not a member of group '{group}'.")]
+    GroupMemberNotFound {
+        group: String,
+        profile: String,
+        browser: String,
+    },
+
     #[error("Cannot delete active profile '{name}'. Switch to another profile first.")]
     ActiveProfileCannotBeDeleted { name: String },
 

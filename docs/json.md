@@ -176,6 +176,53 @@ A bare array, one entry per profile:
 }
 ```
 
+## `bm group list --json`
+
+```json
+{
+  "groups": [
+    {
+      "name": "work-suite",
+      "description": "Daily corporate workspace",
+      "members": [
+        {
+          "browser": "chrome",
+          "profile": "work-1",
+          "urls": ["https://jira.example.com"],
+          "proxy": null
+        }
+      ],
+      "created_at": "2026-10-28T08:30:00Z",
+      "updated_at": "2026-10-28T08:30:00Z"
+    }
+  ]
+}
+```
+
+## `bm group status --json`
+
+```json
+[
+  {
+    "name": "work-suite",
+    "description": "Daily corporate workspace",
+    "member_count": 2,
+    "running_count": 1,
+    "members": [
+      {
+        "browser": "chrome",
+        "profile": "work-1",
+        "running": true,
+        "pid": 12345,
+        "proxy": "socks5://10.0.0.1:1080",
+        "cdp_endpoint": "ws://127.0.0.1:54321/devtools/browser/abc",
+        "urls": ["https://jira.example.com"]
+      }
+    ]
+  }
+]
+```
+
 ## Versioning
 
 - Schema version 1: initial documented set (this file), bm 0.0.5+.
