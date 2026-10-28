@@ -210,3 +210,88 @@ fn test_proxy_lookup_helper() {
     storage.set_proxy("work", browser, None).unwrap();
     assert_eq!(storage.proxy_for(browser, "work"), None);
 }
+
+#[test]
+fn test_template_lifecycle_and_seeding_new_profile() {
+    use bm::template::{apply_template, delete_template, list_templates, save_template};
+    use std::fs;
+
+    let tmp = tempdir().unwrap();
+    let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
+    let browser = Browser::Chrome;
+
+    // Create source profile
+    storage
+        .create_profile("base-dev", Some("Base dev profile"), browser)
+        .unwrap();
+    let src_dir = storage.profile_dir(browser, "base-dev");
+    let default_dir = src_dir.join("Default");
+    fs::create_dir_all(&default_dir).unwrap();
+
+    // Reusable bookmarks & extension
+    fs::write(default_dir.join("Bookmarks"), r#"{"roots":{}}"#).unwrap();
+    let ext_dir = default_dir
+        .join("Extensions")
+        .join("react-dev-tools")
+        .join("1.0.0");
+    fs::create_dir_all(&ext_dir).unwrap();
+    fs::write(
+        ext_dir.join("manifest.json"),
+        r#"{"name":"react-dev-tools"}"#,
+    )
+    .unwrap();
+
+    // Sensitive cookies & logins to be stripped
+    fs::write(default_dir.join("Cookies"), b"cookie-db").unwrap();
+    fs::write(default_dir.join("Login Data"), b"passwords-db").unwrap();
+    fs::create_dir_all(default_dir.join("Sessions")).unwrap();
+    fs::write(
+        default_dir.join("Sessions").join("Session_123"),
+        b"session-data",
+    )
+    .unwrap();
+
+    // 1. Save template
+    let tpl = save_template(
+        &storage,
+        browser,
+        "dev-box",
+        "base-dev",
+        Some("Dev box template with React dev tools"),
+        false,
+    )
+    .unwrap();
+    assert_eq!(tpl.name, "dev-box");
+    assert!(tpl.components.contains(&"Bookmarks".to_string()));
+    assert!(tpl.components.contains(&"Extensions".to_string()));
+
+    // 2. List templates
+    let list = list_templates(&storage, Some(browser)).unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "dev-box");
+
+    // 3. Seed new profile from template
+    storage
+        .create_profile("sandbox-1", Some("New seeded sandbox"), browser)
+        .unwrap();
+    let target_dir = storage.profile_dir(browser, "sandbox-1");
+    let applied = apply_template(&storage, "dev-box", &target_dir).unwrap();
+    assert_eq!(applied.name, "dev-box");
+
+    // Verify seeded profile has Bookmarks and Extensions, but ZERO cookies/sessions/logins!
+    assert!(target_dir.join("Default").join("Bookmarks").exists());
+    assert!(target_dir
+        .join("Default")
+        .join("Extensions")
+        .join("react-dev-tools")
+        .join("1.0.0")
+        .join("manifest.json")
+        .exists());
+    assert!(!target_dir.join("Default").join("Cookies").exists());
+    assert!(!target_dir.join("Default").join("Login Data").exists());
+    assert!(!target_dir.join("Default").join("Sessions").exists());
+
+    // 4. Delete template
+    delete_template(&storage, "dev-box").unwrap();
+    assert!(list_templates(&storage, Some(browser)).unwrap().is_empty());
+}

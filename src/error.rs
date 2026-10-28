@@ -8,6 +8,12 @@ pub enum BmError {
     #[error("Profile '{name}' not found for {browser}.")]
     ProfileNotFound { name: String, browser: String },
 
+    #[error("Template '{name}' already exists.")]
+    TemplateAlreadyExists { name: String },
+
+    #[error("Template '{name}' not found.")]
+    TemplateNotFound { name: String },
+
     #[error("Cannot delete active profile '{name}'. Switch to another profile first.")]
     ActiveProfileCannotBeDeleted { name: String },
 

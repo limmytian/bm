@@ -123,6 +123,22 @@ impl StorageManager {
         self.profiles_dir(browser).join(name)
     }
 
+    pub fn templates_dir(&self) -> PathBuf {
+        self.base_dir.join("templates")
+    }
+
+    pub fn template_dir(&self, name: &str) -> PathBuf {
+        self.templates_dir().join(name)
+    }
+
+    pub fn temp_base_dir(&self) -> PathBuf {
+        self.base_dir.join("temp")
+    }
+
+    pub fn temp_dir(&self, id: &str) -> PathBuf {
+        self.temp_base_dir().join(id)
+    }
+
     pub fn metadata_file(&self) -> PathBuf {
         self.base_dir.join("metadata.json")
     }
@@ -291,6 +307,40 @@ impl StorageManager {
         self.save_registry(&reg)?;
 
         Ok(meta)
+    }
+
+    /// Create a new profile, optionally seeding its data directory from a saved template.
+    pub fn create_profile_with_template(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        browser: Browser,
+        template: Option<&str>,
+    ) -> Result<(ProfileMetadata, Option<crate::template::TemplateMetadata>)> {
+        let tpl_meta = if let Some(tpl) = template {
+            let tpl_dir = self.template_dir(tpl);
+            let manifest_path = tpl_dir.join("manifest.json");
+            if !manifest_path.is_file() {
+                return Err(BmError::TemplateNotFound {
+                    name: tpl.to_string(),
+                });
+            }
+            let manifest_content = fs::read_to_string(manifest_path)?;
+            let meta: crate::template::TemplateMetadata = serde_json::from_str(&manifest_content)?;
+            Some(meta)
+        } else {
+            None
+        };
+
+        let effective_desc =
+            description.or_else(|| tpl_meta.as_ref().and_then(|m| m.description.as_deref()));
+
+        let meta = self.create_profile(name, effective_desc, browser)?;
+        if let Some(tpl) = template {
+            let target_dir = self.profile_dir(browser, name);
+            crate::template::apply_template(self, tpl, &target_dir)?;
+        }
+        Ok((meta, tpl_meta))
     }
 
     /// Get the currently active profile name by inspecting the browser's default user data symlink.
@@ -1199,5 +1249,55 @@ mod tests {
             .unwrap()
             .profiles
             .contains_key("chrome:work"));
+    }
+
+    #[test]
+    fn create_profile_with_template_validates_and_seeds() {
+        let (_tmp, storage) = setup();
+        let browser = Browser::Chrome;
+
+        // Non-existent template fails before creating profile
+        let err = storage
+            .create_profile_with_template("dev1", None, browser, Some("nonexistent"))
+            .unwrap_err();
+        assert!(matches!(err, BmError::TemplateNotFound { .. }));
+        assert!(!storage.profile_dir(browser, "dev1").exists());
+
+        // Create a template
+        let tpl_dir = storage.template_dir("base-tpl");
+        fs::create_dir_all(tpl_dir.join("data").join("Default")).unwrap();
+        fs::write(
+            tpl_dir.join("manifest.json"),
+            serde_json::to_vec(&crate::template::TemplateMetadata {
+                manifest_version: 1,
+                name: "base-tpl".into(),
+                browser,
+                source_profile: "src".into(),
+                description: Some("Base template".into()),
+                created_at: Utc::now(),
+                bm_version: "0.0.8".into(),
+                components: vec!["Bookmarks".into()],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            tpl_dir.join("data").join("Default").join("Bookmarks"),
+            b"bookmarks-content",
+        )
+        .unwrap();
+
+        // Successful creation with template
+        let (meta, tpl_meta) = storage
+            .create_profile_with_template("dev1", Some("seeded"), browser, Some("base-tpl"))
+            .unwrap();
+        assert_eq!(meta.name, "dev1");
+        assert_eq!(tpl_meta.unwrap().name, "base-tpl");
+
+        let seeded_bm = storage
+            .profile_dir(browser, "dev1")
+            .join("Default")
+            .join("Bookmarks");
+        assert_eq!(fs::read(&seeded_bm).unwrap(), b"bookmarks-content");
     }
 }

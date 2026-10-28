@@ -151,6 +151,31 @@ A bare array, one entry per profile:
 ]
 ```
 
+## `bm template list --json`
+
+```json
+{
+  "browser": "chrome",
+  "templates": [
+    {
+      "manifest_version": 1,
+      "name": "dev",
+      "browser": "chrome",
+      "source_profile": "work",
+      "description": "Standard development environment",
+      "created_at": "2026-10-28T08:30:00Z",
+      "bm_version": "0.0.8",
+      "components": [
+        "Bookmarks",
+        "Preferences",
+        "Extensions",
+        "Local State"
+      ]
+    }
+  ]
+}
+```
+
 ## Versioning
 
 - Schema version 1: initial documented set (this file), bm 0.0.5+.

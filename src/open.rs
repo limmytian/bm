@@ -9,6 +9,17 @@ use crate::storage::StorageManager;
 
 pub struct OpenLauncher;
 
+/// Launch result for an ephemeral sandbox (`bm open --temp`).
+#[derive(Debug)]
+pub struct OpenTempOutcome {
+    pub temp_id: String,
+    pub temp_dir: std::path::PathBuf,
+    pub browser_pid: u32,
+    #[allow(dead_code)]
+    pub watcher_pid: Option<u32>,
+    pub cdp_endpoint: Option<String>,
+}
+
 /// One profile's launch result in a multi-profile run.
 #[derive(Debug)]
 pub struct OpenOutcome {
@@ -184,6 +195,106 @@ impl OpenLauncher {
         }
         Ok(outcomes)
     }
+
+    /// Launch an ephemeral sandbox under `~/.bm/temp/<id>`, optionally seeded
+    /// from a template bundle, detached from the terminal, with a detached watcher
+    /// that completely purges the directory when the browser exits.
+    pub fn launch_temp(
+        storage: &StorageManager,
+        browser: Browser,
+        template: Option<&str>,
+        urls: &[String],
+        cdp: bool,
+    ) -> Result<OpenTempOutcome> {
+        let temp_id = format!("sandbox-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S-%f"));
+        let temp_dir = storage.temp_dir(&temp_id);
+        std::fs::create_dir_all(&temp_dir)?;
+
+        if let Some(tpl) = template {
+            crate::template::apply_template(storage, tpl, &temp_dir)?;
+        }
+
+        let binary = browser.binary_path()?;
+        let mut args = vec![
+            format!("--user-data-dir={}", temp_dir.display()),
+            "--no-first-run".to_string(),
+            "--no-default-browser-check".to_string(),
+        ];
+        if cdp {
+            args.extend(crate::cdp::cdp_launch_flags());
+        }
+        args.extend_from_slice(urls);
+
+        let spawned = Command::new(&binary)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                BmError::Other(format!(
+                    "Failed to launch {} ({}): {e}. Is the browser installed?",
+                    browser.display_name(),
+                    binary.display()
+                ))
+            })?;
+        let browser_pid = spawned.id();
+
+        let cdp_endpoint = if cdp {
+            match crate::cdp::wait_for_endpoint(&temp_dir) {
+                Ok(mut entry) => {
+                    entry.pid = Some(browser_pid);
+                    let url = entry.ws_url();
+                    persist_endpoint(storage, browser, &temp_id, entry);
+                    Some(url)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        let watcher_pid = if let Ok(current_exe) = std::env::current_exe() {
+            Command::new(current_exe)
+                .args([
+                    "__watch_temp",
+                    &browser_pid.to_string(),
+                    &temp_dir.to_string_lossy(),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()
+                .map(|c| c.id())
+        } else {
+            None
+        };
+
+        Ok(OpenTempOutcome {
+            temp_id,
+            temp_dir,
+            browser_pid,
+            watcher_pid,
+            cdp_endpoint,
+        })
+    }
+}
+
+/// Wait until a browser process terminates and purge its ephemeral directory.
+pub fn watch_and_purge(pid: u32, temp_dir: &Path) {
+    while crate::running::pid_alive(pid) {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    if let Ok(Some(singleton_pid)) = crate::running::running_pid(temp_dir) {
+        while crate::running::pid_alive(singleton_pid) {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    if temp_dir.exists() {
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 }
 
 /// Read and TCP-verify the DevToolsActivePort of a running instance, if it
@@ -347,6 +458,31 @@ mod tests {
         assert!(
             adopt_running_endpoint(dir, Some(99)).is_none(),
             "stale port must not be adopted"
+        );
+    }
+
+    #[test]
+    fn watch_and_purge_deletes_directory_when_process_exits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target_dir = tmp.path().join("sandbox-test");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::fs::write(target_dir.join("test.txt"), "hello").unwrap();
+
+        let mut child = std::process::Command::new("sleep")
+            .arg("0.2")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+
+        // In a test runner, the current process is the parent; reap child so it does not stay a zombie
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+
+        watch_and_purge(pid, &target_dir);
+        assert!(
+            !target_dir.exists(),
+            "target_dir should be deleted after child process exits"
         );
     }
 }

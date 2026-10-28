@@ -63,6 +63,10 @@ pub enum Commands {
         /// Optional note or description for this profile
         #[arg(short, long)]
         note: Option<String>,
+
+        /// Optional template bundle to seed extensions and preferences from
+        #[arg(short, long)]
+        template: Option<String>,
     },
 
     /// Duplicate a profile on this machine (sessions survive; no cross-machine sync)
@@ -138,12 +142,21 @@ pub enum Commands {
     /// (multiple names launch side by side)
     Open {
         /// Name of the profile to launch (first of possibly several)
-        name: String,
+        #[arg(required_unless_present = "temp")]
+        name: Option<String>,
 
         /// More profile names and/or URLs: tokens that are valid profile
         /// names launch as profiles, the rest open as URLs
         #[arg(value_name = "PROFILE|URL")]
         rest: Vec<String>,
+
+        /// Launch an ephemeral sandbox that is automatically purged upon exit
+        #[arg(long)]
+        temp: bool,
+
+        /// Seed the ephemeral sandbox from a saved template bundle
+        #[arg(long)]
+        template: Option<String>,
 
         /// Enable Chrome DevTools Protocol for this launch: OS-assigned
         /// loopback port, endpoint printed and persisted (full browser
@@ -276,6 +289,49 @@ pub enum Commands {
         /// Re-register over an existing profile (existing data is kept)
         #[arg(long)]
         force: bool,
+    },
+
+    /// Manage profile templates (sanitized extensions, bookmarks, preferences)
+    Template {
+        #[command(subcommand)]
+        action: TemplateAction,
+    },
+
+    /// Internal worker to watch a process and purge its temp directory on exit
+    #[command(name = "__watch_temp", hide = true)]
+    WatchTemp { pid: u32, path: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TemplateAction {
+    /// Save a profile as a reusable template bundle (extracts extensions, bookmarks, preferences, strictly zero credentials/sessions)
+    Save {
+        /// Name of the template bundle
+        name: String,
+
+        /// Profile to extract from
+        profile: String,
+
+        /// Optional note or description for this template
+        #[arg(short, long)]
+        note: Option<String>,
+
+        /// Overwrite an existing template with the same name
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// List all saved profile templates
+    List,
+
+    /// Delete a saved profile template
+    Delete {
+        /// Name of the template to delete
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 

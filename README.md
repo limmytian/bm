@@ -80,6 +80,21 @@ Create a clean, isolated profile with an optional note:
 bm create work --note "Primary corporate accounts (Google, Slack, Jira)"
 bm create personal --note "Personal entertainment and social media"
 bm create staging --browser edge --note "Edge testing sandbox"
+bm create clean-dev --template dev --note "Clean sandbox seeded from 'dev' template"
+```
+
+### Profile Templates (`bm template`)
+Extract extensions, bookmarks, and preferences from an existing profile into a reusable template bundle under `~/.bm/templates/<name>`, with a strict physical-level guarantee of zero cookies, sessions, logins, history, or website local storage:
+```bash
+bm template save dev work --note "Developer base template"
+bm template list
+bm template list --json
+bm template delete dev
+```
+* **Strict zero-session guarantee**: Cookies, session tokens, saved credentials, history, and website HTML5 storage (IndexedDB, WebSQL, localStorage) are physically stripped and verified with recursive post-extraction audits.
+* **Instant initialization**: Seed fresh profiles from saved templates using `bm create <name> --template <template>`:
+```bash
+bm create fresh-worker --template dev
 ```
 
 ### Clone a Profile (Same Machine)
@@ -141,6 +156,19 @@ bm open work personal https://gmail.com   # same URLs for every launched profile
 * The CLI returns immediately; each profile's egress proxy is applied automatically.
 * **Multi-profile grammar**: the first token is always a profile name; every token after it that is a *valid profile name* launches as another profile, and anything else (contains `.`, `:`, `/`, …) opens as a URL in all launched profiles. This keeps `bm open <name> [urls...]` fully back-compatible. Per-profile launch results are reported; a missing profile is reported and the run exits non-zero.
 * Running browser instances are fine: a distinct profile directory runs side by side. Re-running `bm open <name> <url>` hands the URLs to that profile's running instance.
+
+#### Ephemeral Sandboxes (`bm open --temp`)
+Spawn a disposable, completely isolated browser sandbox under `~/.bm/temp/<id>` that is automatically purged upon browser process exit:
+```bash
+bm open --temp
+bm open --temp https://example.com
+bm open --temp --template dev https://github.com
+bm open --temp --cdp
+```
+* Spawns the browser detached and returns immediately.
+* A detached background supervisor watches the browser process and deletes `~/.bm/temp/<id>` the moment the browser closes.
+* Optionally pre-seeded from a template bundle (`--template <tpl>`).
+* Supports `--cdp` for automated disposable browser agent runs.
 
 ### Show Disk Usage (Cache vs Core)
 Per-profile byte accounting, split into regenerable cache and valuable core data:

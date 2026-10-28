@@ -17,6 +17,7 @@ mod shortcut;
 mod size;
 mod status;
 mod storage;
+mod template;
 mod transfer;
 
 use clap::Parser;
@@ -24,7 +25,7 @@ use colored::Colorize;
 use std::io::{self, Write};
 
 use crate::browser::Browser;
-use crate::cli::{CdpAction, Cli, Commands, ProxyAction, ScheduleAction};
+use crate::cli::{CdpAction, Cli, Commands, ProxyAction, ScheduleAction, TemplateAction};
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
@@ -182,14 +183,38 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
 
-            Commands::Create { name, note } => {
-                let meta = storage.create_profile(&name, note.as_deref(), browser)?;
-                println!(
-                    "{} Created profile '{}' for {}.",
-                    "Success:".green().bold(),
-                    meta.name.bold(),
-                    browser.display_name().cyan()
-                );
+            Commands::Create {
+                name,
+                note,
+                template,
+            } => {
+                let (meta, tpl_opt) = storage.create_profile_with_template(
+                    &name,
+                    note.as_deref(),
+                    browser,
+                    template.as_deref(),
+                )?;
+                if let Some(tpl_meta) = tpl_opt {
+                    println!(
+                        "{} Created profile '{}' for {} seeded from template '{}' ({}).",
+                        "Success:".green().bold(),
+                        meta.name.bold(),
+                        browser.display_name().cyan(),
+                        tpl_meta.name.bold(),
+                        if tpl_meta.components.is_empty() {
+                            "clean".dimmed().to_string()
+                        } else {
+                            tpl_meta.components.join(", ")
+                        }
+                    );
+                } else {
+                    println!(
+                        "{} Created profile '{}' for {}.",
+                        "Success:".green().bold(),
+                        meta.name.bold(),
+                        browser.display_name().cyan()
+                    );
+                }
                 println!(
                     "To activate it, run: {}",
                     format!("bm switch {} --browser {}", meta.name, browser).green()
@@ -347,8 +372,62 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
 
-            Commands::Open { name, rest, cdp } => {
-                let (profiles, urls) = crate::open::split_open_args(name, rest);
+            Commands::Open {
+                name,
+                rest,
+                temp,
+                template,
+                cdp,
+            } => {
+                if temp {
+                    let mut urls = Vec::new();
+                    if let Some(n) = name {
+                        urls.push(n);
+                    }
+                    urls.extend(rest);
+
+                    if cdp {
+                        println!(
+                            "{} --cdp hands FULL control of this ephemeral sandbox — loopback only.",
+                            "Warning:".yellow().bold()
+                        );
+                    }
+
+                    let outcome = OpenLauncher::launch_temp(
+                        &storage,
+                        browser,
+                        template.as_deref(),
+                        &urls,
+                        cdp,
+                    )?;
+
+                    println!(
+                        "{} Spawned ephemeral {} sandbox '{}'.",
+                        "Success:".green().bold(),
+                        browser.display_name().cyan().bold(),
+                        outcome.temp_id.bold()
+                    );
+                    println!(
+                        "  Data directory: {}",
+                        outcome.temp_dir.display().to_string().cyan()
+                    );
+                    println!("  Process PID: {}", outcome.browser_pid);
+                    if let Some(tpl) = template {
+                        println!("  Seeded from template: {}", tpl.bold());
+                    }
+                    if let Some(endpoint) = outcome.cdp_endpoint {
+                        println!("  CDP endpoint: {}", endpoint.cyan().bold());
+                    }
+                    println!("  Auto-cleanup: directory will be purged upon browser exit.");
+                    return Ok(());
+                }
+
+                let first = name.ok_or_else(|| {
+                    crate::error::BmError::Other(
+                        "Profile name is required unless launching with --temp".into(),
+                    )
+                })?;
+                let (profiles, urls) = crate::open::split_open_args(first, rest);
                 if cdp {
                     println!(
                         "{} --cdp hands FULL control of this browser (sessions, cookies, everything) to anyone who can reach the endpoint — loopback only.",
@@ -888,6 +967,116 @@ fn run(cli: Cli) -> Result<()> {
             );
             }
 
+            Commands::Template { action } => match action {
+                TemplateAction::Save {
+                    name,
+                    profile,
+                    note,
+                    force,
+                } => {
+                    let meta = template::save_template(
+                        &storage,
+                        browser,
+                        &name,
+                        &profile,
+                        note.as_deref(),
+                        force,
+                    )?;
+                    println!(
+                        "{} Saved template '{}' from profile '{}' for {}.",
+                        "Success:".green().bold(),
+                        meta.name.bold(),
+                        meta.source_profile.bold(),
+                        browser.display_name().cyan()
+                    );
+                    println!(
+                        "  Extracted components: {}",
+                        if meta.components.is_empty() {
+                            "none (source profile was clean/empty)".dimmed().to_string()
+                        } else {
+                            meta.components.join(", ").cyan().to_string()
+                        }
+                    );
+                    println!(
+                        "  Strict zero-session guarantee: cookies, logins, history, and website storage were stripped."
+                    );
+                }
+
+                TemplateAction::List => {
+                    let templates = template::list_templates(&storage, Some(browser))?;
+                    if cli.json {
+                        let json_val = serde_json::json!({
+                            "browser": browser.to_string(),
+                            "templates": templates,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                        return Ok(());
+                    }
+                    if templates.is_empty() {
+                        println!(
+                            "No saved templates found for {}. Save one with '{}'.",
+                            browser.display_name().cyan().bold(),
+                            format!("bm template save <name> <profile> --browser {}", browser)
+                                .green()
+                        );
+                        return Ok(());
+                    }
+                    println!(
+                        "{} for {}:",
+                        "Saved Templates".bold(),
+                        browser.display_name().cyan().bold()
+                    );
+                    println!(
+                        "  {:<18} {:<18} {:<28} {}",
+                        "NAME".bold(),
+                        "SOURCE PROFILE".bold(),
+                        "COMPONENTS".bold(),
+                        "NOTE".bold()
+                    );
+                    println!("  {}", "-".repeat(80).dimmed());
+                    for tpl in templates {
+                        let comps = if tpl.components.is_empty() {
+                            "empty".dimmed().to_string()
+                        } else {
+                            tpl.components.join(", ")
+                        };
+                        println!(
+                            "  {:<18} {:<18} {:<28} {}",
+                            tpl.name.bold(),
+                            tpl.source_profile.cyan(),
+                            comps,
+                            tpl.description.as_deref().unwrap_or("-").dimmed()
+                        );
+                    }
+                }
+
+                TemplateAction::Delete { name, yes } => {
+                    let tpl_dir = storage.template_dir(&name);
+                    if !tpl_dir.exists() {
+                        return Err(BmError::TemplateNotFound { name });
+                    }
+                    if !yes && interactive {
+                        print!(
+                            "Are you sure you want to delete template '{}'? [y/N]: ",
+                            name.yellow().bold()
+                        );
+                        io::stdout().flush()?;
+                        let mut response = String::new();
+                        io::stdin().read_line(&mut response)?;
+                        if !response.trim().eq_ignore_ascii_case("y") {
+                            println!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                    template::delete_template(&storage, &name)?;
+                    println!(
+                        "{} Deleted template '{}'.",
+                        "Success:".green().bold(),
+                        name.bold()
+                    );
+                }
+            },
+
             Commands::Cdp { action } => match action {
                 CdpAction::Status => {
                     let purged = crate::cdp::purge_dead_entries(&storage)?;
@@ -1121,6 +1310,11 @@ fn run(cli: Cli) -> Result<()> {
                     }
                 }
             },
+
+            Commands::WatchTemp { pid, path } => {
+                crate::open::watch_and_purge(pid, &path);
+                return Ok(());
+            }
         },
     }
 

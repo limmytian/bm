@@ -17,4 +17,5 @@ pub mod shortcut;
 pub mod size;
 pub mod status;
 pub mod storage;
+pub mod template;
 pub mod transfer;
