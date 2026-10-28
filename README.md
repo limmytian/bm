@@ -190,6 +190,30 @@ bm group close work-suite --force # force kill if processes refuse to exit
 * **Graceful multi-process shutdown**: `bm group close` coordinates targeted teardown across browsers, trying CDP `Browser.close` first, then SIGTERM, and only SIGKILL upon `--force`.
 * **Scriptable inspection**: `bm group list --json` and `bm group status --json` output machine-readable statuses for agent orchestration.
 
+### Agent Lease Locks (`bm lease`)
+Prevent accidental human interventions or conflicting scripts while an autonomous agent controls a profile:
+```bash
+# Acquire a lease lock (default 300s TTL, auto-records caller PID)
+bm lease claim work-1 --holder "agent-scraper-01" --ttl 300 --reason "Batch CDP workflow"
+
+# Extend lease expiration during long operations
+bm lease heartbeat work-1 --ttl 300
+
+# Inspect active leases
+bm lease status
+bm lease status --json
+
+# Destructive operations (switch, clean, rename, delete) are strictly rejected while locked
+bm switch work-1        # Error: Profile 'work-1' is locked by agent lease (holder: 'agent-scraper-01')
+bm switch work-1 --force # Override lease lock if authorized
+
+# Release lease when work is done
+bm lease release work-1 --holder "agent-scraper-01"
+```
+* **Mutual exclusion**: Guard against human `bm switch`, `bm clean`, `bm rename`, and `bm delete` during CDP sessions.
+* **Dead PID detection**: Stale leases whose holding process has exited are automatically considered inactive.
+* **Persistent & Private**: Stored under `~/.bm/leases.json` with strict 0600 file permissions.
+
 ### Show Disk Usage (Cache vs Core)
 Per-profile byte accounting, split into regenerable cache and valuable core data:
 ```bash

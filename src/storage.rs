@@ -147,6 +147,10 @@ impl StorageManager {
         self.base_dir.join("groups.json")
     }
 
+    pub fn leases_file(&self) -> PathBuf {
+        self.base_dir.join("leases.json")
+    }
+
     pub fn state_file(&self) -> PathBuf {
         self.base_dir.join("state.json")
     }
@@ -537,6 +541,8 @@ impl StorageManager {
             }
         }
 
+        crate::lease::guard_lease(self, browser, name, false)?;
+
         fs::remove_dir_all(&target_dir)?;
 
         let mut reg = self.load_registry()?;
@@ -561,6 +567,8 @@ impl StorageManager {
                 browser: browser.display_name().to_string(),
             });
         }
+
+        crate::lease::guard_lease(self, browser, name, force)?;
 
         // Capture the profile being left, for `bm switch -`. Recorded after
         // the switch succeeds; only bm-managed activations count.
@@ -762,6 +770,7 @@ impl StorageManager {
                 browser: browser.display_name().to_string(),
             });
         }
+        crate::lease::guard_lease(self, browser, old, false)?;
         let dst_dir = self.profile_dir(browser, new);
         if dst_dir.exists() {
             return Err(BmError::ProfileAlreadyExists {

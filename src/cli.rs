@@ -303,9 +303,74 @@ pub enum Commands {
         action: GroupAction,
     },
 
+    /// Manage agent lease locks to prevent destructive concurrent operations
+    Lease {
+        #[command(subcommand)]
+        action: LeaseAction,
+    },
+
     /// Internal worker to watch a process and purge its temp directory on exit
     #[command(name = "__watch_temp", hide = true)]
     WatchTemp { pid: u32, path: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LeaseAction {
+    /// Claim or refresh an agent lease lock on a profile
+    Claim {
+        /// Profile to lock
+        profile: String,
+
+        /// Name/identifier of the agent or holder acquiring the lease
+        #[arg(short, long)]
+        holder: String,
+
+        /// Lease duration in seconds (default: 300)
+        #[arg(short, long)]
+        ttl: Option<u64>,
+
+        /// Reason or note explaining what this lease is for
+        #[arg(short, long)]
+        reason: Option<String>,
+
+        /// Process ID associated with the lease (defaults to caller PID)
+        #[arg(long)]
+        pid: Option<u32>,
+
+        /// Force claim even if currently held by another agent
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Release an agent lease lock
+    Release {
+        /// Profile to unlock
+        profile: String,
+
+        /// Holder identifier (required to prevent releasing someone else's lease unless --force)
+        #[arg(short, long)]
+        holder: Option<String>,
+
+        /// Break the lease even if held by a different agent
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Extend the duration (heartbeat) of an existing lease
+    Heartbeat {
+        /// Profile whose lease to extend
+        profile: String,
+
+        /// New duration in seconds from now (default: 300)
+        #[arg(short, long)]
+        ttl: Option<u64>,
+    },
+
+    /// List active leases or check status of a specific profile
+    Status {
+        /// Profile to check (omit to list all active leases)
+        profile: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

@@ -6,6 +6,7 @@ mod cli;
 mod doctor;
 mod error;
 mod group;
+mod lease;
 mod mcp;
 mod open;
 mod policy;
@@ -27,7 +28,7 @@ use std::io::{self, Write};
 
 use crate::browser::Browser;
 use crate::cli::{
-    CdpAction, Cli, Commands, GroupAction, ProxyAction, ScheduleAction, TemplateAction,
+    CdpAction, Cli, Commands, GroupAction, LeaseAction, ProxyAction, ScheduleAction, TemplateAction,
 };
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
@@ -638,6 +639,7 @@ fn run(cli: Cli) -> Result<()> {
                         }
                         total += bytes;
                     } else {
+                        crate::lease::guard_lease(&storage, browser, &profile, false)?;
                         let reclaimed = purge_caches(&dir)?;
                         println!(
                             "{} '{}' — reclaimed {}.",
@@ -1384,6 +1386,133 @@ fn run(cli: Cli) -> Result<()> {
                                 m.error.as_deref().unwrap_or("failed to close")
                             );
                         }
+                    }
+                }
+            },
+
+            Commands::Lease { action } => match action {
+                LeaseAction::Claim {
+                    profile,
+                    holder,
+                    ttl,
+                    reason,
+                    pid,
+                    force,
+                } => {
+                    let pid_val = pid.or_else(|| Some(std::process::id()));
+                    let lease = lease::claim_lease(
+                        &storage,
+                        browser,
+                        &profile,
+                        lease::ClaimOptions {
+                            holder: &holder,
+                            ttl_secs: ttl,
+                            reason: reason.as_deref(),
+                            pid: pid_val,
+                            force,
+                        },
+                    )?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                        return Ok(());
+                    }
+                    println!(
+                        "{} Leased '{}' on {} to '{}' for {}s (expires at {}).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        browser.display_name().cyan(),
+                        lease.holder.bold(),
+                        ttl.unwrap_or(lease::DEFAULT_LEASE_TTL_SECS),
+                        lease.expires_at.to_rfc3339().dimmed()
+                    );
+                    if let Some(r) = lease.reason {
+                        println!("  Reason: {}", r.dimmed());
+                    }
+                    if let Some(p) = lease.pid {
+                        println!("  Holder PID: {}", p.to_string().dimmed());
+                    }
+                }
+
+                LeaseAction::Release {
+                    profile,
+                    holder,
+                    force,
+                } => {
+                    lease::release_lease(&storage, browser, &profile, holder.as_deref(), force)?;
+                    println!(
+                        "{} Released lease on profile '{}' ({}).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        browser.display_name().cyan()
+                    );
+                }
+
+                LeaseAction::Heartbeat { profile, ttl } => {
+                    let lease = lease::heartbeat_lease(&storage, browser, &profile, ttl)?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                        return Ok(());
+                    }
+                    println!(
+                        "{} Extended lease on '{}' ({}) until {}.",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        browser.display_name().cyan(),
+                        lease.expires_at.to_rfc3339().dimmed()
+                    );
+                }
+
+                LeaseAction::Status { profile } => {
+                    let leases = lease::list_leases(&storage, Some(browser), profile.as_deref())?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&leases)?);
+                        return Ok(());
+                    }
+                    let now = chrono::Utc::now();
+                    let active_leases: Vec<_> =
+                        leases.into_iter().filter(|l| l.is_active(now)).collect();
+                    if active_leases.is_empty() {
+                        if let Some(p) = profile {
+                            println!(
+                                "Profile '{}' on {} has no active lease.",
+                                p.bold(),
+                                browser.display_name().cyan()
+                            );
+                        } else {
+                            println!(
+                                "No active leases found for {}.",
+                                browser.display_name().cyan()
+                            );
+                        }
+                        return Ok(());
+                    }
+                    println!("{}:", "Active Agent Leases".bold());
+                    println!(
+                        "  {:<18} {:<18} {:<10} {:<10} {:<24} {}",
+                        "PROFILE".bold(),
+                        "HOLDER".bold(),
+                        "PID".bold(),
+                        "REMAIN".bold(),
+                        "EXPIRES AT".bold(),
+                        "REASON".bold()
+                    );
+                    println!("  {}", "-".repeat(90).dimmed());
+                    for l in active_leases {
+                        let remain_str = format!("{}s", l.remaining_seconds(now));
+                        let pid_str = l
+                            .pid
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "-".dimmed().to_string());
+                        let reason_str = l.reason.as_deref().unwrap_or("-").dimmed();
+                        println!(
+                            "  {:<18} {:<18} {:<10} {:<10} {:<24} {}",
+                            l.profile.bold(),
+                            l.holder.bold(),
+                            pid_str,
+                            remain_str.cyan(),
+                            l.expires_at.to_rfc3339().dimmed(),
+                            reason_str
+                        );
                     }
                 }
             },

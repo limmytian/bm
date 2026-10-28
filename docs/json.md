@@ -223,6 +223,23 @@ A bare array, one entry per profile:
 ]
 ```
 
+## `bm lease status --json`
+
+```json
+[
+  {
+    "browser": "chrome",
+    "profile": "work-1",
+    "holder": "agent-worker-1",
+    "pid": 12345,
+    "reason": "CDP automation workflow",
+    "claimed_at": "2026-10-28T10:00:00Z",
+    "heartbeat_at": "2026-10-28T10:02:00Z",
+    "expires_at": "2026-10-28T10:05:00Z"
+  }
+]
+```
+
 ## Versioning
 
 - Schema version 1: initial documented set (this file), bm 0.0.5+.

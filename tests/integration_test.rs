@@ -367,3 +367,65 @@ fn test_group_lifecycle_and_management() {
     delete_group(&storage, "work-suite").unwrap();
     assert!(list_groups(&storage).unwrap().is_empty());
 }
+
+#[test]
+fn test_lease_locking_and_switch_guard() {
+    use bm::lease::{claim_lease, heartbeat_lease, list_leases, release_lease, ClaimOptions};
+
+    let tmp = tempdir().unwrap();
+    let fake_default = tmp.path().join("fake_default");
+    std::fs::create_dir_all(&fake_default).unwrap();
+
+    let storage = StorageManager::with_base_dir(tmp.path().join(".bm"))
+        .with_default_dir_override(fake_default);
+    let browser = Browser::Chrome;
+
+    storage.create_profile("locked-p1", None, browser).unwrap();
+    storage.create_profile("target-p2", None, browser).unwrap();
+
+    // 1. Claim lease on locked-p1
+    let lease = claim_lease(
+        &storage,
+        browser,
+        "locked-p1",
+        ClaimOptions {
+            holder: "agent-smith",
+            ttl_secs: Some(120),
+            reason: Some("Processing CDP queue"),
+            pid: Some(std::process::id()),
+            force: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(lease.holder, "agent-smith");
+
+    // 2. Listing leases returns locked-p1
+    let active = list_leases(&storage, Some(browser), None).unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].profile, "locked-p1");
+
+    // 3. Destructive actions without force are blocked
+    let switch_err = storage.switch_profile("locked-p1", browser, false);
+    assert!(switch_err.is_err());
+    let del_err = storage.delete_profile("locked-p1", browser);
+    assert!(del_err.is_err());
+    let rename_err = storage.rename_profile("locked-p1", "new-p1", browser);
+    assert!(rename_err.is_err());
+
+    // 4. Force switch allows bypass
+    assert!(storage.switch_profile("locked-p1", browser, true).is_ok());
+
+    // 5. Heartbeat extends expiry
+    let extended = heartbeat_lease(&storage, browser, "locked-p1", Some(300)).unwrap();
+    assert!(extended.expires_at >= lease.expires_at);
+
+    // 6. Release lease unlocks the profile
+    release_lease(&storage, browser, "locked-p1", Some("agent-smith"), false).unwrap();
+    assert!(list_leases(&storage, Some(browser), None)
+        .unwrap()
+        .is_empty());
+
+    // 7. Switch to target-p2 and delete locked-p1 succeeds after release
+    storage.switch_profile("target-p2", browser, false).unwrap();
+    assert!(storage.delete_profile("locked-p1", browser).is_ok());
+}

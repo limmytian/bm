@@ -6,6 +6,7 @@ pub mod cli;
 pub mod doctor;
 pub mod error;
 pub mod group;
+pub mod lease;
 pub mod mcp;
 pub mod open;
 pub mod policy;

@@ -27,6 +27,17 @@ pub enum BmError {
         browser: String,
     },
 
+    #[error("Profile '{profile}' for {browser} is locked by agent lease (holder: '{holder}', expires in {remaining_secs}s). Use --force to override or release the lease first.")]
+    ProfileLeased {
+        profile: String,
+        browser: String,
+        holder: String,
+        remaining_secs: i64,
+    },
+
+    #[error("No active lease found for profile '{profile}' on {browser}.")]
+    LeaseNotFound { profile: String, browser: String },
+
     #[error("Cannot delete active profile '{name}'. Switch to another profile first.")]
     ActiveProfileCannotBeDeleted { name: String },
 
