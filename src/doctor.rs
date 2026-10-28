@@ -9,10 +9,53 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::browser::Browser;
+use chrono::Utc;
+use serde::Serialize;
+
+use crate::browser::{Browser, ResolutionSource};
 use crate::error::Result;
 use crate::storage::{ProfileMetadata, StorageManager};
-use chrono::Utc;
+
+/// Status of browser executable detection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BrowserHealth {
+    pub browser: Browser,
+    pub found: bool,
+    pub path: Option<PathBuf>,
+    pub source: Option<ResolutionSource>,
+    pub error: Option<String>,
+}
+
+/// Audit detection status for a specific browser.
+pub fn check_browser_health(browser: Browser) -> BrowserHealth {
+    match browser.resolve_binary_path() {
+        Ok((path, source)) => BrowserHealth {
+            browser,
+            found: true,
+            path: Some(path),
+            source: Some(source),
+            error: None,
+        },
+        Err(err) => BrowserHealth {
+            browser,
+            found: false,
+            path: None,
+            source: None,
+            error: Some(err.to_string()),
+        },
+    }
+}
+
+/// Audit detection status for all supported browsers independently.
+#[allow(dead_code)]
+pub fn check_all_browsers_health() -> Vec<BrowserHealth> {
+    vec![
+        check_browser_health(Browser::Chrome),
+        check_browser_health(Browser::Edge),
+        check_browser_health(Browser::Brave),
+        check_browser_health(Browser::Chromium),
+    ]
+}
 
 /// A safe repair action attached to an issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +81,7 @@ pub struct Issue {
 /// Run every health check for the given browser.
 pub fn run_checks(storage: &StorageManager, browser: Browser) -> Result<Vec<Issue>> {
     let mut issues = Vec::new();
+    check_browser_executable(browser, &mut issues)?;
     check_default_symlink(storage, browser, &mut issues)?;
     check_registry_vs_disk(storage, browser, &mut issues)?;
     issues.extend(find_broken_shortcuts(storage).into_iter().map(|(path, target)| Issue {
@@ -93,6 +137,23 @@ pub fn apply_fixes(storage: &StorageManager, issues: &[Issue]) -> Result<usize> 
         }
     }
     Ok(fixed)
+}
+
+/// Check 0: verify that the browser executable can be located and exists.
+fn check_browser_executable(browser: Browser, issues: &mut Vec<Issue>) -> Result<()> {
+    let health = check_browser_health(browser);
+    if !health.found {
+        issues.push(Issue {
+            check: "browser-executable",
+            detail: format!(
+                "{} executable could not be located: {}",
+                browser.display_name(),
+                health.error.as_deref().unwrap_or("not found")
+            ),
+            repair: None,
+        });
+    }
+    Ok(())
 }
 
 /// Check 1: the browser's default-data-dir symlink.
@@ -362,7 +423,41 @@ mod tests {
         }
         let default_link = tmp.path().join("default-link");
         let storage = StorageManager::with_base_dir(base).with_default_dir_override(default_link);
+        if Browser::Chrome.resolve_binary_path().is_err() {
+            let mock = tmp.path().join("mock-chrome");
+            let _ = fs::write(&mock, b"#!/bin/sh\n");
+            std::env::set_var("BM_CHROME_BIN", &mock);
+        }
         (tmp, storage, Browser::Chrome)
+    }
+
+    #[test]
+    fn browser_health_checks_independent_per_browser() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mock_brave = tmp.path().join("mock-brave");
+        fs::write(&mock_brave, b"#!/bin/sh\n").unwrap();
+
+        std::env::set_var("BM_BRAVE_BIN", &mock_brave);
+        let health = check_browser_health(Browser::Brave);
+        assert!(health.found);
+        assert_eq!(health.path, Some(mock_brave));
+        assert_eq!(
+            health.source,
+            Some(ResolutionSource::Env("BM_BRAVE_BIN".to_string()))
+        );
+
+        std::env::remove_var("BM_BRAVE_BIN");
+    }
+
+    #[test]
+    fn check_all_browsers_health_reports_all_variants() {
+        let all = check_all_browsers_health();
+        assert_eq!(all.len(), 4);
+        let browsers: Vec<Browser> = all.into_iter().map(|h| h.browser).collect();
+        assert!(browsers.contains(&Browser::Chrome));
+        assert!(browsers.contains(&Browser::Edge));
+        assert!(browsers.contains(&Browser::Brave));
+        assert!(browsers.contains(&Browser::Chromium));
     }
 
     #[test]

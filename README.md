@@ -237,13 +237,30 @@ bm status
 ```
 Shows the active profile (including external/unmanaged activations), which profiles have a live browser process and its pid (via the Chromium `SingletonLock`), each profile's egress proxy, the newest backup per profile (timestamp, size, `age` marker when encrypted), and any open `bm doctor` findings with severity.
 
-### Health Audit
-Audit the bm-managed state for common problems — dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:
+### Health Audit & Browser Discovery
+Audit the browser executable resolution and bm-managed state for common problems — binary resolution sources, dangling or external default-data-dir symlinks, registry entries without profile dirs (and vice versa), standalone shortcuts pointing at deleted profiles, macOS managed-policy proxy conflicts with the active profile, and overly permissive `~/.bm` permissions:
 ```bash
-bm doctor          # report only
+bm doctor          # report only (includes browser binary resolution status)
 bm doctor --fix    # apply the safe repairs: remove a dangling symlink, backfill missing metadata
 ```
 Everything marked `report-only` needs manual action; the command prints the suggested fix for each finding.
+
+#### Browser Auto-Discovery & Custom Overrides
+`bm` automatically discovers installed browsers across standard directories and dynamic search indices:
+* **macOS**: Probes `/Applications`, `~/Applications`, and queries macOS Spotlight (`mdfind`) by Bundle Identifier (`com.google.Chrome`, `com.microsoft.edgemac`, `com.brave.Browser`, `org.chromium.Chromium`).
+* **Linux**: Searches `$PATH`, `/snap/bin`, `/usr/bin`, and `/usr/local/bin`.
+
+To target custom Chromium engines, Canary/Dev/Beta channels, or portable builds, set per-browser environment variables (or the global fallback):
+```bash
+# Per-browser overrides (take precedence)
+export BM_CHROME_PATH="/opt/custom-chrome/Google Chrome.app"
+export BM_EDGE_PATH="/usr/local/bin/msedge-dev"
+export BM_BRAVE_PATH="$HOME/Applications/Brave Browser Nightly.app"
+export BM_CHROMIUM_PATH="/snap/bin/chromium"
+
+# Global fallback (used when no browser-specific variable is set)
+export BM_BROWSER_PATH="/path/to/custom/browser"
+```
 
 ### Manage Per-Profile Proxy
 Each profile can route traffic through its own egress proxy (SOCKS5, HTTP, or HTTPS):

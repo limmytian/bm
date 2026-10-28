@@ -139,6 +139,11 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
+        if Browser::Chrome.resolve_binary_path().is_err() {
+            let mock = tmp.path().join("mock-chrome");
+            let _ = std::fs::write(&mock, b"#!/bin/sh\n");
+            std::env::set_var("BM_CHROME_BIN", &mock);
+        }
         (tmp, StorageManager::with_base_dir(base))
     }
 

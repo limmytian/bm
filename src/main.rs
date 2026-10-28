@@ -761,12 +761,34 @@ fn run(cli: Cli) -> Result<()> {
             }
 
             Commands::Doctor { fix } => {
-                use crate::doctor::{apply_fixes, run_checks};
+                use crate::doctor::{apply_fixes, check_browser_health, run_checks};
 
                 if cli.json {
                     print_json(&crate::report::doctor_json(&storage, browser, fix)?)?;
                     return Ok(());
                 }
+
+                let health = check_browser_health(browser);
+                match (&health.path, &health.source) {
+                    (Some(path), Some(source)) => {
+                        println!(
+                            "{} {} binary resolved at {} ({})",
+                            "Browser:".blue().bold(),
+                            browser.display_name().cyan(),
+                            path.display(),
+                            source.to_string().green()
+                        );
+                    }
+                    _ => {
+                        println!(
+                            "{} {} binary could not be located ({})",
+                            "Browser:".yellow().bold(),
+                            browser.display_name().cyan(),
+                            health.error.as_deref().unwrap_or("not found").red()
+                        );
+                    }
+                }
+
                 let issues = run_checks(&storage, browser)?;
                 if issues.is_empty() {
                     println!(
