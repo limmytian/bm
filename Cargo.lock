@@ -248,7 +248,7 @@ dependencies = [
 
 [[package]]
 name = "bm"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "aes",
  "age",
