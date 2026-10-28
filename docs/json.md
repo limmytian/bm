@@ -151,6 +151,121 @@ A bare array, one entry per profile:
 ]
 ```
 
+## `bm template list --json`
+
+```json
+{
+  "browser": "chrome",
+  "templates": [
+    {
+      "manifest_version": 1,
+      "name": "dev",
+      "browser": "chrome",
+      "source_profile": "work",
+      "description": "Standard development environment",
+      "created_at": "2026-10-28T08:30:00Z",
+      "bm_version": "0.0.8",
+      "components": [
+        "Bookmarks",
+        "Preferences",
+        "Extensions",
+        "Local State"
+      ]
+    }
+  ]
+}
+```
+
+## `bm group list --json`
+
+```json
+{
+  "groups": [
+    {
+      "name": "work-suite",
+      "description": "Daily corporate workspace",
+      "members": [
+        {
+          "browser": "chrome",
+          "profile": "work-1",
+          "urls": ["https://jira.example.com"],
+          "proxy": null
+        }
+      ],
+      "created_at": "2026-10-28T08:30:00Z",
+      "updated_at": "2026-10-28T08:30:00Z"
+    }
+  ]
+}
+```
+
+## `bm group status --json`
+
+```json
+[
+  {
+    "name": "work-suite",
+    "description": "Daily corporate workspace",
+    "member_count": 2,
+    "running_count": 1,
+    "members": [
+      {
+        "browser": "chrome",
+        "profile": "work-1",
+        "running": true,
+        "pid": 12345,
+        "proxy": "socks5://10.0.0.1:1080",
+        "cdp_endpoint": "ws://127.0.0.1:54321/devtools/browser/abc",
+        "urls": ["https://jira.example.com"]
+      }
+    ]
+  }
+]
+```
+
+## `bm lease status --json`
+
+```json
+[
+  {
+    "browser": "chrome",
+    "profile": "work-1",
+    "holder": "agent-worker-1",
+    "pid": 12345,
+    "reason": "CDP automation workflow",
+    "claimed_at": "2026-10-28T10:00:00Z",
+    "heartbeat_at": "2026-10-28T10:02:00Z",
+    "expires_at": "2026-10-28T10:05:00Z"
+  }
+]
+```
+
+## `bm session export <profile> --domain <domain> --json`
+
+Masked values are returned by default for safety:
+```json
+{
+  "version": 1,
+  "browser": "chrome",
+  "profile": "work-1",
+  "domain": "github.com",
+  "exported_at": "2026-10-28T10:00:00Z",
+  "cookies": [
+    {
+      "name": "user_session",
+      "domain": ".github.com",
+      "path": "/",
+      "value": "gho*** (48 bytes)",
+      "expires_utc": 1800000000,
+      "is_secure": true,
+      "is_httponly": true,
+      "samesite": 1
+    }
+  ],
+  "note": "Values masked for security; pass --raw to display unmasked values"
+}
+```
+
 ## Versioning
 
 - Schema version 1: initial documented set (this file), bm 0.0.5+.

@@ -8,6 +8,36 @@ pub enum BmError {
     #[error("Profile '{name}' not found for {browser}.")]
     ProfileNotFound { name: String, browser: String },
 
+    #[error("Template '{name}' already exists.")]
+    TemplateAlreadyExists { name: String },
+
+    #[error("Template '{name}' not found.")]
+    TemplateNotFound { name: String },
+
+    #[error("Group '{name}' already exists.")]
+    GroupAlreadyExists { name: String },
+
+    #[error("Group '{name}' not found.")]
+    GroupNotFound { name: String },
+
+    #[error("Profile '{profile}' for {browser} is not a member of group '{group}'.")]
+    GroupMemberNotFound {
+        group: String,
+        profile: String,
+        browser: String,
+    },
+
+    #[error("Profile '{profile}' for {browser} is locked by agent lease (holder: '{holder}', expires in {remaining_secs}s). Use --force to override or release the lease first.")]
+    ProfileLeased {
+        profile: String,
+        browser: String,
+        holder: String,
+        remaining_secs: i64,
+    },
+
+    #[error("No active lease found for profile '{profile}' on {browser}.")]
+    LeaseNotFound { profile: String, browser: String },
+
     #[error("Cannot delete active profile '{name}'. Switch to another profile first.")]
     ActiveProfileCannotBeDeleted { name: String },
 

@@ -5,6 +5,8 @@ mod cdp;
 mod cli;
 mod doctor;
 mod error;
+mod group;
+mod lease;
 mod mcp;
 mod open;
 mod policy;
@@ -13,10 +15,12 @@ mod proxy_test;
 mod report;
 mod running;
 mod schedule;
+mod session;
 mod shortcut;
 mod size;
 mod status;
 mod storage;
+mod template;
 mod transfer;
 
 use clap::Parser;
@@ -24,7 +28,10 @@ use colored::Colorize;
 use std::io::{self, Write};
 
 use crate::browser::Browser;
-use crate::cli::{CdpAction, Cli, Commands, ProxyAction, ScheduleAction};
+use crate::cli::{
+    CdpAction, Cli, Commands, GroupAction, LeaseAction, ProxyAction, ScheduleAction, SessionAction,
+    TemplateAction,
+};
 use crate::error::{BmError, Result};
 use crate::open::OpenLauncher;
 use crate::proxy::ProxyConfig;
@@ -182,14 +189,38 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
 
-            Commands::Create { name, note } => {
-                let meta = storage.create_profile(&name, note.as_deref(), browser)?;
-                println!(
-                    "{} Created profile '{}' for {}.",
-                    "Success:".green().bold(),
-                    meta.name.bold(),
-                    browser.display_name().cyan()
-                );
+            Commands::Create {
+                name,
+                note,
+                template,
+            } => {
+                let (meta, tpl_opt) = storage.create_profile_with_template(
+                    &name,
+                    note.as_deref(),
+                    browser,
+                    template.as_deref(),
+                )?;
+                if let Some(tpl_meta) = tpl_opt {
+                    println!(
+                        "{} Created profile '{}' for {} seeded from template '{}' ({}).",
+                        "Success:".green().bold(),
+                        meta.name.bold(),
+                        browser.display_name().cyan(),
+                        tpl_meta.name.bold(),
+                        if tpl_meta.components.is_empty() {
+                            "clean".dimmed().to_string()
+                        } else {
+                            tpl_meta.components.join(", ")
+                        }
+                    );
+                } else {
+                    println!(
+                        "{} Created profile '{}' for {}.",
+                        "Success:".green().bold(),
+                        meta.name.bold(),
+                        browser.display_name().cyan()
+                    );
+                }
                 println!(
                     "To activate it, run: {}",
                     format!("bm switch {} --browser {}", meta.name, browser).green()
@@ -347,8 +378,62 @@ fn run(cli: Cli) -> Result<()> {
                 );
             }
 
-            Commands::Open { name, rest, cdp } => {
-                let (profiles, urls) = crate::open::split_open_args(name, rest);
+            Commands::Open {
+                name,
+                rest,
+                temp,
+                template,
+                cdp,
+            } => {
+                if temp {
+                    let mut urls = Vec::new();
+                    if let Some(n) = name {
+                        urls.push(n);
+                    }
+                    urls.extend(rest);
+
+                    if cdp {
+                        println!(
+                            "{} --cdp hands FULL control of this ephemeral sandbox — loopback only.",
+                            "Warning:".yellow().bold()
+                        );
+                    }
+
+                    let outcome = OpenLauncher::launch_temp(
+                        &storage,
+                        browser,
+                        template.as_deref(),
+                        &urls,
+                        cdp,
+                    )?;
+
+                    println!(
+                        "{} Spawned ephemeral {} sandbox '{}'.",
+                        "Success:".green().bold(),
+                        browser.display_name().cyan().bold(),
+                        outcome.temp_id.bold()
+                    );
+                    println!(
+                        "  Data directory: {}",
+                        outcome.temp_dir.display().to_string().cyan()
+                    );
+                    println!("  Process PID: {}", outcome.browser_pid);
+                    if let Some(tpl) = template {
+                        println!("  Seeded from template: {}", tpl.bold());
+                    }
+                    if let Some(endpoint) = outcome.cdp_endpoint {
+                        println!("  CDP endpoint: {}", endpoint.cyan().bold());
+                    }
+                    println!("  Auto-cleanup: directory will be purged upon browser exit.");
+                    return Ok(());
+                }
+
+                let first = name.ok_or_else(|| {
+                    crate::error::BmError::Other(
+                        "Profile name is required unless launching with --temp".into(),
+                    )
+                })?;
+                let (profiles, urls) = crate::open::split_open_args(first, rest);
                 if cdp {
                     println!(
                         "{} --cdp hands FULL control of this browser (sessions, cookies, everything) to anyone who can reach the endpoint — loopback only.",
@@ -556,6 +641,7 @@ fn run(cli: Cli) -> Result<()> {
                         }
                         total += bytes;
                     } else {
+                        crate::lease::guard_lease(&storage, browser, &profile, false)?;
                         let reclaimed = purge_caches(&dir)?;
                         println!(
                             "{} '{}' — reclaimed {}.",
@@ -888,6 +974,685 @@ fn run(cli: Cli) -> Result<()> {
             );
             }
 
+            Commands::Template { action } => match action {
+                TemplateAction::Save {
+                    name,
+                    profile,
+                    note,
+                    force,
+                } => {
+                    let meta = template::save_template(
+                        &storage,
+                        browser,
+                        &name,
+                        &profile,
+                        note.as_deref(),
+                        force,
+                    )?;
+                    println!(
+                        "{} Saved template '{}' from profile '{}' for {}.",
+                        "Success:".green().bold(),
+                        meta.name.bold(),
+                        meta.source_profile.bold(),
+                        browser.display_name().cyan()
+                    );
+                    println!(
+                        "  Extracted components: {}",
+                        if meta.components.is_empty() {
+                            "none (source profile was clean/empty)".dimmed().to_string()
+                        } else {
+                            meta.components.join(", ").cyan().to_string()
+                        }
+                    );
+                    println!(
+                        "  Strict zero-session guarantee: cookies, logins, history, and website storage were stripped."
+                    );
+                }
+
+                TemplateAction::List => {
+                    let templates = template::list_templates(&storage, Some(browser))?;
+                    if cli.json {
+                        let json_val = serde_json::json!({
+                            "browser": browser.to_string(),
+                            "templates": templates,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                        return Ok(());
+                    }
+                    if templates.is_empty() {
+                        println!(
+                            "No saved templates found for {}. Save one with '{}'.",
+                            browser.display_name().cyan().bold(),
+                            format!("bm template save <name> <profile> --browser {}", browser)
+                                .green()
+                        );
+                        return Ok(());
+                    }
+                    println!(
+                        "{} for {}:",
+                        "Saved Templates".bold(),
+                        browser.display_name().cyan().bold()
+                    );
+                    println!(
+                        "  {:<18} {:<18} {:<28} {}",
+                        "NAME".bold(),
+                        "SOURCE PROFILE".bold(),
+                        "COMPONENTS".bold(),
+                        "NOTE".bold()
+                    );
+                    println!("  {}", "-".repeat(80).dimmed());
+                    for tpl in templates {
+                        let comps = if tpl.components.is_empty() {
+                            "empty".dimmed().to_string()
+                        } else {
+                            tpl.components.join(", ")
+                        };
+                        println!(
+                            "  {:<18} {:<18} {:<28} {}",
+                            tpl.name.bold(),
+                            tpl.source_profile.cyan(),
+                            comps,
+                            tpl.description.as_deref().unwrap_or("-").dimmed()
+                        );
+                    }
+                }
+
+                TemplateAction::Delete { name, yes } => {
+                    let tpl_dir = storage.template_dir(&name);
+                    if !tpl_dir.exists() {
+                        return Err(BmError::TemplateNotFound { name });
+                    }
+                    if !yes && interactive {
+                        print!(
+                            "Are you sure you want to delete template '{}'? [y/N]: ",
+                            name.yellow().bold()
+                        );
+                        io::stdout().flush()?;
+                        let mut response = String::new();
+                        io::stdin().read_line(&mut response)?;
+                        if !response.trim().eq_ignore_ascii_case("y") {
+                            println!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                    template::delete_template(&storage, &name)?;
+                    println!(
+                        "{} Deleted template '{}'.",
+                        "Success:".green().bold(),
+                        name.bold()
+                    );
+                }
+            },
+
+            Commands::Group { action } => match action {
+                GroupAction::Create { name, note } => {
+                    let g = group::create_group(&storage, &name, note.as_deref())?;
+                    println!(
+                        "{} Created session group '{}'.",
+                        "Success:".green().bold(),
+                        g.name.bold()
+                    );
+                    if let Some(desc) = g.description {
+                        println!("  Description: {}", desc.dimmed());
+                    }
+                    println!(
+                        "Add members with: {}",
+                        format!("bm group add {} <profile> [--browser <b>]", g.name).green()
+                    );
+                }
+
+                GroupAction::Add {
+                    group,
+                    profile,
+                    browser: target_browser,
+                    url,
+                    proxy,
+                } => {
+                    let b = target_browser.unwrap_or(browser);
+                    let proxy_cfg = match proxy {
+                        Some(p) => Some(ProxyConfig::parse(&p, None)?),
+                        None => None,
+                    };
+                    let g = group::add_member(&storage, &group, b, &profile, url, proxy_cfg)?;
+                    println!(
+                        "{} Added '{}' ({}) to group '{}' ({} total members).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        b.display_name().cyan(),
+                        g.name.bold(),
+                        g.members.len()
+                    );
+                }
+
+                GroupAction::Remove {
+                    group,
+                    profile,
+                    browser: target_browser,
+                } => {
+                    let b = target_browser.unwrap_or(browser);
+                    let g = group::remove_member(&storage, &group, b, &profile)?;
+                    println!(
+                        "{} Removed '{}' ({}) from group '{}' ({} remaining).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        b.display_name().cyan(),
+                        g.name.bold(),
+                        g.members.len()
+                    );
+                }
+
+                GroupAction::Delete { name, yes } => {
+                    if !storage.groups_file().exists() {
+                        return Err(BmError::GroupNotFound { name });
+                    }
+                    if !yes && interactive {
+                        print!(
+                            "Are you sure you want to delete session group '{}'? [y/N]: ",
+                            name.yellow().bold()
+                        );
+                        io::stdout().flush()?;
+                        let mut response = String::new();
+                        io::stdin().read_line(&mut response)?;
+                        if !response.trim().eq_ignore_ascii_case("y") {
+                            println!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                    group::delete_group(&storage, &name)?;
+                    println!(
+                        "{} Deleted session group '{}'.",
+                        "Success:".green().bold(),
+                        name.bold()
+                    );
+                }
+
+                GroupAction::List => {
+                    let groups = group::list_groups(&storage)?;
+                    if cli.json {
+                        let val = serde_json::json!({
+                            "groups": groups,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&val)?);
+                        return Ok(());
+                    }
+                    if groups.is_empty() {
+                        println!(
+                            "No session groups found. Create one with '{}'.",
+                            "bm group create <name>".green()
+                        );
+                        return Ok(());
+                    }
+                    println!("{}:", "Session Groups".bold());
+                    println!(
+                        "  {:<18} {:<10} {}",
+                        "GROUP".bold(),
+                        "MEMBERS".bold(),
+                        "DESCRIPTION".bold()
+                    );
+                    println!("  {}", "-".repeat(60).dimmed());
+                    for g in groups {
+                        println!(
+                            "  {:<18} {:<10} {}",
+                            g.name.bold(),
+                            g.members.len(),
+                            g.description.as_deref().unwrap_or("-").dimmed()
+                        );
+                    }
+                }
+
+                GroupAction::Show { name } => {
+                    let g = group::get_group(&storage, &name)?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&g)?);
+                        return Ok(());
+                    }
+                    println!("Group: {}", g.name.bold().green());
+                    if let Some(desc) = g.description {
+                        println!("Description: {}", desc.dimmed());
+                    }
+                    println!("Members: ({})", g.members.len());
+                    if g.members.is_empty() {
+                        println!(
+                            "  {} No members in this group. Add with '{}'.",
+                            "-".dimmed(),
+                            format!("bm group add {} <profile>", g.name).green()
+                        );
+                        return Ok(());
+                    }
+                    println!(
+                        "  {:<14} {:<18} {:<24} {}",
+                        "BROWSER".bold(),
+                        "PROFILE".bold(),
+                        "PROXY".bold(),
+                        "URLS".bold()
+                    );
+                    println!("  {}", "-".repeat(70).dimmed());
+                    for m in g.members {
+                        let proxy_str = m
+                            .proxy
+                            .map(|p| p.to_string())
+                            .or_else(|| {
+                                storage
+                                    .proxy_for(m.browser, &m.profile)
+                                    .map(|p| format!("{} (inherited)", p))
+                            })
+                            .unwrap_or_else(|| "-".dimmed().to_string());
+                        let urls_str = if m.urls.is_empty() {
+                            "-".dimmed().to_string()
+                        } else {
+                            m.urls.join(", ")
+                        };
+                        println!(
+                            "  {:<14} {:<18} {:<24} {}",
+                            m.browser.display_name().cyan(),
+                            m.profile.bold(),
+                            proxy_str,
+                            urls_str
+                        );
+                    }
+                }
+
+                GroupAction::Status { name } => {
+                    let reports = match name {
+                        Some(ref n) => vec![group::status_group(&storage, n)?],
+                        None => group::status_all_groups(&storage)?,
+                    };
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&reports)?);
+                        return Ok(());
+                    }
+                    if reports.is_empty() {
+                        println!(
+                            "No session groups found. Create one with '{}'.",
+                            "bm group create <name>".green()
+                        );
+                        return Ok(());
+                    }
+                    println!("{}:", "Group Runtime Status".bold());
+                    for r in reports {
+                        println!(
+                            "\nGroup: {} ({} of {} running)",
+                            r.name.bold().green(),
+                            r.running_count.to_string().cyan(),
+                            r.member_count
+                        );
+                        if let Some(desc) = r.description {
+                            println!("  Description: {}", desc.dimmed());
+                        }
+                        if r.members.is_empty() {
+                            println!("  {} No members.", "-".dimmed());
+                            continue;
+                        }
+                        println!(
+                            "  {:<14} {:<18} {:<12} {:<10} {:<20} {}",
+                            "BROWSER".bold(),
+                            "PROFILE".bold(),
+                            "STATUS".bold(),
+                            "PID".bold(),
+                            "PROXY".bold(),
+                            "CDP".bold()
+                        );
+                        println!("  {}", "-".repeat(85).dimmed());
+                        for m in r.members {
+                            let status_str = if m.running {
+                                "running".green().bold().to_string()
+                            } else {
+                                "stopped".dimmed().to_string()
+                            };
+                            let pid_str = m
+                                .pid
+                                .map(|p| p.to_string())
+                                .unwrap_or_else(|| "-".dimmed().to_string());
+                            let proxy_str = m.proxy.unwrap_or_else(|| "-".dimmed().to_string());
+                            let cdp_str =
+                                m.cdp_endpoint.unwrap_or_else(|| "-".dimmed().to_string());
+                            println!(
+                                "  {:<14} {:<18} {:<12} {:<10} {:<20} {}",
+                                m.browser.display_name().cyan(),
+                                m.profile.bold(),
+                                status_str,
+                                pid_str,
+                                proxy_str,
+                                cdp_str
+                            );
+                        }
+                    }
+                }
+
+                GroupAction::Open { name, urls, cdp } => {
+                    if cdp {
+                        println!(
+                            "{} --cdp hands FULL control of all launched group browser instances — loopback only.",
+                            "Warning:".yellow().bold()
+                        );
+                    }
+                    let report = group::open_group(&storage, &name, &urls, cdp)?;
+                    println!(
+                        "{} Launching group '{}' ({} members):",
+                        "Group:".bold(),
+                        report.group.green().bold(),
+                        report.members.len()
+                    );
+                    for m in &report.members {
+                        match &m.error {
+                            None => {
+                                let pid_str =
+                                    m.pid.map(|p| format!("(pid {})", p)).unwrap_or_default();
+                                println!(
+                                    "  {} {}/{} {} spawned detached.",
+                                    "ok".green().bold(),
+                                    m.browser.display_name().cyan(),
+                                    m.profile.bold(),
+                                    pid_str.dimmed()
+                                );
+                                if let Some(endpoint) = &m.cdp_endpoint {
+                                    println!("    CDP endpoint: {}", endpoint.cyan().bold());
+                                }
+                            }
+                            Some(err) => {
+                                println!(
+                                    "  {} {}/{} — {}",
+                                    "fail".red().bold(),
+                                    m.browser.display_name().cyan(),
+                                    m.profile.bold(),
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+
+                GroupAction::Close { name, force } => {
+                    let report = group::close_group(&storage, &name, force)?;
+                    println!(
+                        "{} Closing group '{}' ({} members):",
+                        "Group:".bold(),
+                        report.group.green().bold(),
+                        report.members.len()
+                    );
+                    for m in &report.members {
+                        if m.success {
+                            println!(
+                                "  {} {}/{} — closed ({})",
+                                "ok".green().bold(),
+                                m.browser.display_name().cyan(),
+                                m.profile.bold(),
+                                m.method.dimmed()
+                            );
+                        } else {
+                            println!(
+                                "  {} {}/{} — {}",
+                                "fail".red().bold(),
+                                m.browser.display_name().cyan(),
+                                m.profile.bold(),
+                                m.error.as_deref().unwrap_or("failed to close")
+                            );
+                        }
+                    }
+                }
+            },
+
+            Commands::Lease { action } => match action {
+                LeaseAction::Claim {
+                    profile,
+                    holder,
+                    ttl,
+                    reason,
+                    pid,
+                    force,
+                } => {
+                    let pid_val = pid.or_else(|| Some(std::process::id()));
+                    let lease = lease::claim_lease(
+                        &storage,
+                        browser,
+                        &profile,
+                        lease::ClaimOptions {
+                            holder: &holder,
+                            ttl_secs: ttl,
+                            reason: reason.as_deref(),
+                            pid: pid_val,
+                            force,
+                        },
+                    )?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                        return Ok(());
+                    }
+                    println!(
+                        "{} Leased '{}' on {} to '{}' for {}s (expires at {}).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        browser.display_name().cyan(),
+                        lease.holder.bold(),
+                        ttl.unwrap_or(lease::DEFAULT_LEASE_TTL_SECS),
+                        lease.expires_at.to_rfc3339().dimmed()
+                    );
+                    if let Some(r) = lease.reason {
+                        println!("  Reason: {}", r.dimmed());
+                    }
+                    if let Some(p) = lease.pid {
+                        println!("  Holder PID: {}", p.to_string().dimmed());
+                    }
+                }
+
+                LeaseAction::Release {
+                    profile,
+                    holder,
+                    force,
+                } => {
+                    lease::release_lease(&storage, browser, &profile, holder.as_deref(), force)?;
+                    println!(
+                        "{} Released lease on profile '{}' ({}).",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        browser.display_name().cyan()
+                    );
+                }
+
+                LeaseAction::Heartbeat { profile, ttl } => {
+                    let lease = lease::heartbeat_lease(&storage, browser, &profile, ttl)?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&lease)?);
+                        return Ok(());
+                    }
+                    println!(
+                        "{} Extended lease on '{}' ({}) until {}.",
+                        "Success:".green().bold(),
+                        profile.bold(),
+                        browser.display_name().cyan(),
+                        lease.expires_at.to_rfc3339().dimmed()
+                    );
+                }
+
+                LeaseAction::Status { profile } => {
+                    let leases = lease::list_leases(&storage, Some(browser), profile.as_deref())?;
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&leases)?);
+                        return Ok(());
+                    }
+                    let now = chrono::Utc::now();
+                    let active_leases: Vec<_> =
+                        leases.into_iter().filter(|l| l.is_active(now)).collect();
+                    if active_leases.is_empty() {
+                        if let Some(p) = profile {
+                            println!(
+                                "Profile '{}' on {} has no active lease.",
+                                p.bold(),
+                                browser.display_name().cyan()
+                            );
+                        } else {
+                            println!(
+                                "No active leases found for {}.",
+                                browser.display_name().cyan()
+                            );
+                        }
+                        return Ok(());
+                    }
+                    println!("{}:", "Active Agent Leases".bold());
+                    println!(
+                        "  {:<18} {:<18} {:<10} {:<10} {:<24} {}",
+                        "PROFILE".bold(),
+                        "HOLDER".bold(),
+                        "PID".bold(),
+                        "REMAIN".bold(),
+                        "EXPIRES AT".bold(),
+                        "REASON".bold()
+                    );
+                    println!("  {}", "-".repeat(90).dimmed());
+                    for l in active_leases {
+                        let remain_str = format!("{}s", l.remaining_seconds(now));
+                        let pid_str = l
+                            .pid
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "-".dimmed().to_string());
+                        let reason_str = l.reason.as_deref().unwrap_or("-").dimmed();
+                        println!(
+                            "  {:<18} {:<18} {:<10} {:<10} {:<24} {}",
+                            l.profile.bold(),
+                            l.holder.bold(),
+                            pid_str,
+                            remain_str.cyan(),
+                            l.expires_at.to_rfc3339().dimmed(),
+                            reason_str
+                        );
+                    }
+                }
+            },
+
+            Commands::Session { action } => match action {
+                SessionAction::Export {
+                    profile,
+                    domain,
+                    out,
+                    raw,
+                    encrypt,
+                } => {
+                    let bundle = session::export_session(&storage, browser, &profile, &domain)?;
+
+                    let passphrase = if encrypt {
+                        use age::secrecy::ExposeSecret;
+                        Some(
+                            crate::backup::read_passphrase(true)?
+                                .expose_secret()
+                                .to_string(),
+                        )
+                    } else {
+                        None
+                    };
+
+                    if let Some(ref out_path) = out {
+                        session::save_session_bundle(&bundle, out_path, passphrase.as_deref())?;
+                        let enc_label = if encrypt { " (age encrypted)" } else { "" };
+                        println!(
+                            "{} Exported {} cookie(s) for '{}' from profile '{}' ({}) to {} (permissions 0600{}).",
+                            "Success:".green().bold(),
+                            bundle.cookies.len(),
+                            bundle.domain.cyan(),
+                            bundle.profile.bold(),
+                            browser.display_name().cyan(),
+                            out_path.display().to_string().bold(),
+                            enc_label
+                        );
+                    }
+
+                    if cli.json {
+                        let json_val = if raw {
+                            serde_json::to_value(&bundle)?
+                        } else {
+                            let masked_cookies: Vec<_> = bundle
+                                .cookies
+                                .iter()
+                                .map(|c| {
+                                    serde_json::json!({
+                                        "name": c.name,
+                                        "domain": c.domain,
+                                        "path": c.path,
+                                        "value": c.masked_value(),
+                                        "expires_utc": c.expires_utc,
+                                        "is_secure": c.is_secure,
+                                        "is_httponly": c.is_httponly,
+                                        "samesite": c.samesite,
+                                    })
+                                })
+                                .collect();
+                            serde_json::json!({
+                                "version": bundle.version,
+                                "browser": bundle.browser,
+                                "profile": bundle.profile,
+                                "domain": bundle.domain,
+                                "exported_at": bundle.exported_at,
+                                "cookies": masked_cookies,
+                                "note": "Values masked for security; pass --raw to display unmasked values"
+                            })
+                        };
+                        println!("{}", serde_json::to_string_pretty(&json_val)?);
+                        return Ok(());
+                    }
+
+                    if out.is_none() || raw {
+                        if bundle.cookies.is_empty() {
+                            println!(
+                                "No cookies found for domain '{}' in profile '{}' ({}).",
+                                bundle.domain.cyan(),
+                                bundle.profile.bold(),
+                                browser.display_name().cyan()
+                            );
+                            return Ok(());
+                        }
+
+                        println!(
+                            "{}: profile '{}' ({}) | domain '{}' ({} found)",
+                            "Session Cookies".bold(),
+                            bundle.profile.bold(),
+                            browser.display_name().cyan(),
+                            bundle.domain.cyan(),
+                            bundle.cookies.len()
+                        );
+                        if !raw {
+                            println!(
+                                "{}",
+                                "Note: Sensitive cookie values masked by default. Use --raw to display plaintext."
+                                    .dimmed()
+                            );
+                        }
+                        println!(
+                            "  {:<24} {:<24} {:<24} {}",
+                            "NAME".bold(),
+                            "VALUE".bold(),
+                            "DOMAIN".bold(),
+                            "FLAGS".bold()
+                        );
+                        println!("  {}", "-".repeat(85).dimmed());
+                        for c in &bundle.cookies {
+                            let val_str = if raw {
+                                c.value.clone()
+                            } else {
+                                c.masked_value()
+                            };
+                            let mut flags = Vec::new();
+                            if c.is_secure {
+                                flags.push("Secure");
+                            }
+                            if c.is_httponly {
+                                flags.push("HttpOnly");
+                            }
+                            let flags_str = if flags.is_empty() {
+                                "-".dimmed().to_string()
+                            } else {
+                                flags.join(", ")
+                            };
+                            println!(
+                                "  {:<24} {:<24} {:<24} {}",
+                                c.name.bold(),
+                                val_str,
+                                c.domain.dimmed(),
+                                flags_str.cyan()
+                            );
+                        }
+                    }
+                }
+            },
+
             Commands::Cdp { action } => match action {
                 CdpAction::Status => {
                     let purged = crate::cdp::purge_dead_entries(&storage)?;
@@ -1121,6 +1886,11 @@ fn run(cli: Cli) -> Result<()> {
                     }
                 }
             },
+
+            Commands::WatchTemp { pid, path } => {
+                crate::open::watch_and_purge(pid, &path);
+                return Ok(());
+            }
         },
     }
 

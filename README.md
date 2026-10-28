@@ -80,6 +80,21 @@ Create a clean, isolated profile with an optional note:
 bm create work --note "Primary corporate accounts (Google, Slack, Jira)"
 bm create personal --note "Personal entertainment and social media"
 bm create staging --browser edge --note "Edge testing sandbox"
+bm create clean-dev --template dev --note "Clean sandbox seeded from 'dev' template"
+```
+
+### Profile Templates (`bm template`)
+Extract extensions, bookmarks, and preferences from an existing profile into a reusable template bundle under `~/.bm/templates/<name>`, with a strict physical-level guarantee of zero cookies, sessions, logins, history, or website local storage:
+```bash
+bm template save dev work --note "Developer base template"
+bm template list
+bm template list --json
+bm template delete dev
+```
+* **Strict zero-session guarantee**: Cookies, session tokens, saved credentials, history, and website HTML5 storage (IndexedDB, WebSQL, localStorage) are physically stripped and verified with recursive post-extraction audits.
+* **Instant initialization**: Seed fresh profiles from saved templates using `bm create <name> --template <template>`:
+```bash
+bm create fresh-worker --template dev
 ```
 
 ### Clone a Profile (Same Machine)
@@ -141,6 +156,84 @@ bm open work personal https://gmail.com   # same URLs for every launched profile
 * The CLI returns immediately; each profile's egress proxy is applied automatically.
 * **Multi-profile grammar**: the first token is always a profile name; every token after it that is a *valid profile name* launches as another profile, and anything else (contains `.`, `:`, `/`, …) opens as a URL in all launched profiles. This keeps `bm open <name> [urls...]` fully back-compatible. Per-profile launch results are reported; a missing profile is reported and the run exits non-zero.
 * Running browser instances are fine: a distinct profile directory runs side by side. Re-running `bm open <name> <url>` hands the URLs to that profile's running instance.
+
+#### Ephemeral Sandboxes (`bm open --temp`)
+Spawn a disposable, completely isolated browser sandbox under `~/.bm/temp/<id>` that is automatically purged upon browser process exit:
+```bash
+bm open --temp
+bm open --temp https://example.com
+bm open --temp --template dev https://github.com
+bm open --temp --cdp
+```
+* Spawns the browser detached and returns immediately.
+* A detached background supervisor watches the browser process and deletes `~/.bm/temp/<id>` the moment the browser closes.
+* Optionally pre-seeded from a template bundle (`--template <tpl>`).
+* Supports `--cdp` for automated disposable browser agent runs.
+
+### Multi-Profile Workspaces & Session Groups (`bm group`)
+Manage and orchestrate clusters of browser profiles across browsers (Chrome, Edge, Brave, Chromium) as coherent workspaces:
+```bash
+# Manage groups and memberships
+bm group create work-suite --note "Daily engineering workspace"
+bm group add work-suite work-main --url https://mail.google.com
+bm group add work-suite ops-edge --browser edge --proxy socks5://127.0.0.1:1080 --url https://grafana.internal
+bm group list
+bm group show work-suite
+
+# Orchestrate concurrent lifecycles
+bm group open work-suite          # launch all member profiles side by side in parallel
+bm group status work-suite        # inspect live running instances, PIDs, and CDP endpoints
+bm group close work-suite         # graceful multi-process teardown (via CDP / SIGTERM)
+bm group close work-suite --force # force kill if processes refuse to exit
+```
+* **Concurrent parallel launch**: `bm group open` launches every member profile detached with its own isolated directory, member-level proxy overrides, and designated startup URLs.
+* **Graceful multi-process shutdown**: `bm group close` coordinates targeted teardown across browsers, trying CDP `Browser.close` first, then SIGTERM, and only SIGKILL upon `--force`.
+* **Scriptable inspection**: `bm group list --json` and `bm group status --json` output machine-readable statuses for agent orchestration.
+
+### Agent Lease Locks (`bm lease`)
+Prevent accidental human interventions or conflicting scripts while an autonomous agent controls a profile:
+```bash
+# Acquire a lease lock (default 300s TTL, auto-records caller PID)
+bm lease claim work-1 --holder "agent-scraper-01" --ttl 300 --reason "Batch CDP workflow"
+
+# Extend lease expiration during long operations
+bm lease heartbeat work-1 --ttl 300
+
+# Inspect active leases
+bm lease status
+bm lease status --json
+
+# Destructive operations (switch, clean, rename, delete) are strictly rejected while locked
+bm switch work-1        # Error: Profile 'work-1' is locked by agent lease (holder: 'agent-scraper-01')
+bm switch work-1 --force # Override lease lock if authorized
+
+# Release lease when work is done
+bm lease release work-1 --holder "agent-scraper-01"
+```
+* **Mutual exclusion**: Guard against human `bm switch`, `bm clean`, `bm rename`, and `bm delete` during CDP sessions.
+* **Dead PID detection**: Stale leases whose holding process has exited are automatically considered inactive.
+* **Persistent & Private**: Stored under `~/.bm/leases.json` with strict 0600 file permissions.
+
+### Scoped Session & Cookie Export (`bm session export`)
+Securely export decrypted session cookies for a specific domain using OS Keychain / Secret Service:
+```bash
+# Export cookies for a concrete domain (masked by default on stdout)
+bm session export work-1 --domain github.com
+
+# Export to a secure file (0600 permissions strictly enforced)
+bm session export work-1 --domain github.com --out ~/session.json
+
+# View raw unmasked values explicitly on stdout
+bm session export work-1 --domain github.com --raw
+
+# Encrypt output bundle using an age passphrase
+bm session export work-1 --domain github.com --out ~/session.age --encrypt
+```
+* **Mandatory domain scoping**: Wildcards (`*`, `%`, empty) are strictly prohibited; only cookies matching the specified domain or its subdomains are extracted.
+* **Safe by default**: Output to terminal stdout masks sensitive cookie values unless `--raw` is explicitly passed.
+* **0600 Permission enforcement**: Output files are created with private permissions (`0600`).
+* **Transport encryption**: Supports age passphrase encryption for safe transfer across environments.
+* **MCP Integration**: Available as the `export_session` tool with security gatekeeping.
 
 ### Show Disk Usage (Cache vs Core)
 Per-profile byte accounting, split into regenerable cache and valuable core data:

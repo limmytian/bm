@@ -63,6 +63,10 @@ pub enum Commands {
         /// Optional note or description for this profile
         #[arg(short, long)]
         note: Option<String>,
+
+        /// Optional template bundle to seed extensions and preferences from
+        #[arg(short, long)]
+        template: Option<String>,
     },
 
     /// Duplicate a profile on this machine (sessions survive; no cross-machine sync)
@@ -138,12 +142,21 @@ pub enum Commands {
     /// (multiple names launch side by side)
     Open {
         /// Name of the profile to launch (first of possibly several)
-        name: String,
+        #[arg(required_unless_present = "temp")]
+        name: Option<String>,
 
         /// More profile names and/or URLs: tokens that are valid profile
         /// names launch as profiles, the rest open as URLs
         #[arg(value_name = "PROFILE|URL")]
         rest: Vec<String>,
+
+        /// Launch an ephemeral sandbox that is automatically purged upon exit
+        #[arg(long)]
+        temp: bool,
+
+        /// Seed the ephemeral sandbox from a saved template bundle
+        #[arg(long)]
+        template: Option<String>,
 
         /// Enable Chrome DevTools Protocol for this launch: OS-assigned
         /// loopback port, endpoint printed and persisted (full browser
@@ -276,6 +289,247 @@ pub enum Commands {
         /// Re-register over an existing profile (existing data is kept)
         #[arg(long)]
         force: bool,
+    },
+
+    /// Manage profile templates (sanitized extensions, bookmarks, preferences)
+    Template {
+        #[command(subcommand)]
+        action: TemplateAction,
+    },
+
+    /// Manage multi-profile workspaces and session groups
+    Group {
+        #[command(subcommand)]
+        action: GroupAction,
+    },
+
+    /// Manage agent lease locks to prevent destructive concurrent operations
+    Lease {
+        #[command(subcommand)]
+        action: LeaseAction,
+    },
+
+    /// Manage profile session credentials with strict security boundaries
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+
+    /// Internal worker to watch a process and purge its temp directory on exit
+    #[command(name = "__watch_temp", hide = true)]
+    WatchTemp { pid: u32, path: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionAction {
+    /// Export cookies strictly scoped to a specified domain
+    Export {
+        /// Profile whose session cookies to export
+        profile: String,
+
+        /// Concrete target domain to export cookies for (wildcards prohibited, e.g. github.com)
+        #[arg(short, long)]
+        domain: String,
+
+        /// Output file path (enforced with 0600 permissions)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+
+        /// Display raw unmasked cookie values on stdout (default: masked to prevent leakage)
+        #[arg(long)]
+        raw: bool,
+
+        /// Encrypt the export bundle using an age passphrase
+        #[arg(long)]
+        encrypt: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LeaseAction {
+    /// Claim or refresh an agent lease lock on a profile
+    Claim {
+        /// Profile to lock
+        profile: String,
+
+        /// Name/identifier of the agent or holder acquiring the lease
+        #[arg(short, long)]
+        holder: String,
+
+        /// Lease duration in seconds (default: 300)
+        #[arg(short, long)]
+        ttl: Option<u64>,
+
+        /// Reason or note explaining what this lease is for
+        #[arg(short, long)]
+        reason: Option<String>,
+
+        /// Process ID associated with the lease (defaults to caller PID)
+        #[arg(long)]
+        pid: Option<u32>,
+
+        /// Force claim even if currently held by another agent
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Release an agent lease lock
+    Release {
+        /// Profile to unlock
+        profile: String,
+
+        /// Holder identifier (required to prevent releasing someone else's lease unless --force)
+        #[arg(short, long)]
+        holder: Option<String>,
+
+        /// Break the lease even if held by a different agent
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Extend the duration (heartbeat) of an existing lease
+    Heartbeat {
+        /// Profile whose lease to extend
+        profile: String,
+
+        /// New duration in seconds from now (default: 300)
+        #[arg(short, long)]
+        ttl: Option<u64>,
+    },
+
+    /// List active leases or check status of a specific profile
+    Status {
+        /// Profile to check (omit to list all active leases)
+        profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GroupAction {
+    /// Create a new session group
+    Create {
+        /// Name of the group
+        name: String,
+
+        /// Optional note or description for the group
+        #[arg(short, long)]
+        note: Option<String>,
+    },
+
+    /// Add a profile to a session group
+    Add {
+        /// Name of the group
+        group: String,
+
+        /// Profile to add
+        profile: String,
+
+        /// Browser of the profile (defaults to global --browser)
+        #[arg(short, long)]
+        browser: Option<Browser>,
+
+        /// URLs to associate with this member
+        #[arg(short, long)]
+        url: Vec<String>,
+
+        /// Optional egress proxy override for this member
+        #[arg(short, long)]
+        proxy: Option<String>,
+    },
+
+    /// Remove a profile from a session group
+    Remove {
+        /// Name of the group
+        group: String,
+
+        /// Profile to remove
+        profile: String,
+
+        /// Browser of the profile (defaults to global --browser)
+        #[arg(short, long)]
+        browser: Option<Browser>,
+    },
+
+    /// Delete a session group
+    Delete {
+        /// Name of the group
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+
+    /// List all session groups
+    List,
+
+    /// Show detailed configuration of a session group
+    Show {
+        /// Name of the group
+        name: String,
+    },
+
+    /// Show live runtime status (running instances, CDP ports, proxies) of groups
+    Status {
+        /// Optional group name; omit to show all groups
+        name: Option<String>,
+    },
+
+    /// Launch all member profiles of a group concurrently side by side
+    Open {
+        /// Name of the group to open
+        name: String,
+
+        /// Additional URLs to open across members
+        #[arg(value_name = "URL")]
+        urls: Vec<String>,
+
+        /// Enable CDP debugging for all launched member profiles
+        #[arg(long)]
+        cdp: bool,
+    },
+
+    /// Gracefully close all running browser instances in a group
+    Close {
+        /// Name of the group to close
+        name: String,
+
+        /// Force termination if graceful shutdown fails or times out
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TemplateAction {
+    /// Save a profile as a reusable template bundle (extracts extensions, bookmarks, preferences, strictly zero credentials/sessions)
+    Save {
+        /// Name of the template bundle
+        name: String,
+
+        /// Profile to extract from
+        profile: String,
+
+        /// Optional note or description for this template
+        #[arg(short, long)]
+        note: Option<String>,
+
+        /// Overwrite an existing template with the same name
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// List all saved profile templates
+    List,
+
+    /// Delete a saved profile template
+    Delete {
+        /// Name of the template to delete
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
