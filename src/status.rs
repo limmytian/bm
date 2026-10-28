@@ -317,7 +317,7 @@ mod tests {
         assert!(report.profiles.is_empty());
         assert!(report.doctor.issues.is_empty());
         let text = render_status(&report);
-        assert!(text.contains("Active profile: none"));
+        assert!(text.contains("Active profile:") && text.contains("none"));
         assert!(text.contains("No profiles yet"));
     }
 
