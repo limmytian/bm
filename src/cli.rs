@@ -402,7 +402,7 @@ pub enum LeaseAction {
         profile: String,
 
         /// Name/identifier of the agent or holder acquiring the lease
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         holder: String,
 
         /// Lease duration in seconds (default: 300)
@@ -428,7 +428,7 @@ pub enum LeaseAction {
         profile: String,
 
         /// Holder identifier (required to prevent releasing someone else's lease unless --force)
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         holder: Option<String>,
 
         /// Break the lease even if held by a different agent
