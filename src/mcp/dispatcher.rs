@@ -1,0 +1,266 @@
+use serde_json::{json, Value};
+
+use crate::browser::Browser;
+use crate::error::BmError;
+use crate::storage::StorageManager;
+
+/// Resolve the effective browser for a tool call: the explicit `browser`
+/// argument when present, else the server's `--browser` default.
+pub(crate) fn pick_browser(default_browser: Browser, args: &Value) -> Result<Browser, BmError> {
+    match args.get("browser").and_then(Value::as_str) {
+        Some(raw) => parse_browser(raw),
+        None => Ok(default_browser),
+    }
+}
+
+pub(crate) fn parse_browser(raw: &str) -> Result<Browser, BmError> {
+    match raw {
+        "chrome" => Ok(Browser::Chrome),
+        "edge" => Ok(Browser::Edge),
+        "brave" => Ok(Browser::Brave),
+        "chromium" => Ok(Browser::Chromium),
+        other => Err(BmError::Other(format!(
+            "unsupported browser '{other}' (chrome, edge, brave, chromium)"
+        ))),
+    }
+}
+
+/// Run blocking bm logic off the async reactor.
+pub(crate) async fn blocking<T, F>(f: F) -> Result<T, BmError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, BmError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| BmError::Other(format!("task panicked: {e}")))?
+}
+
+/// Dispatch one tool call by name. Returns the structured JSON payload.
+pub async fn dispatch_tool(
+    default_browser: Browser,
+    name: &str,
+    args: Value,
+) -> Result<Value, BmError> {
+    let args = if args.is_null() { json!({}) } else { args };
+    match name {
+        "list_profiles" => {
+            let browser = pick_browser(default_browser, &args)?;
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::report::list_json(&storage, browser)
+            })
+            .await
+        }
+        "current" => {
+            let browser = pick_browser(default_browser, &args)?;
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::report::current_json(&storage, browser)
+            })
+            .await
+        }
+        "status" => {
+            let browser = pick_browser(default_browser, &args)?;
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::report::status_json(&storage, browser)
+            })
+            .await
+        }
+        "open_profile" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let urls = args
+                .get("urls")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| BmError::Other("urls must be strings".into()))
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let cdp = args.get("cdp").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let outcomes =
+                    crate::open::OpenLauncher::launch_all(&storage, browser, &[name], &urls, cdp)?;
+                let outcomes: Vec<Value> = outcomes
+                    .iter()
+                    .map(|o| {
+                        json!({
+                            "profile": o.profile,
+                            "launched": o.error.is_none(),
+                            "error": o.error,
+                            "cdp_endpoint": o.cdp_endpoint,
+                            "cdp_reused": o.cdp_reused,
+                        })
+                    })
+                    .collect();
+                Ok(json!({"outcomes": outcomes}))
+            })
+            .await
+        }
+        "switch" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let backup = storage.switch_profile(&name, browser, force)?;
+                crate::policy::sync_for_active_profile(&storage, browser)?;
+                Ok(json!({
+                    "switched_to": name,
+                    "previous_data_preserved_as": backup,
+                }))
+            })
+            .await
+        }
+        "proxy_get" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args.get("name").and_then(Value::as_str).map(str::to_string);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::report::proxy_json(&storage, browser, name.as_deref())
+            })
+            .await
+        }
+        "proxy_set" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let server_str = args
+                .get("server")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: server".into()))?
+                .to_string();
+            let bypass = args
+                .get("bypass")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let cfg = crate::proxy::ProxyConfig::parse(&server_str, bypass.as_deref())?;
+                let meta = storage.set_proxy(&name, browser, Some(cfg))?;
+                let is_active =
+                    storage.get_current_active(browser)?.as_deref() == Some(meta.name.as_str());
+                if is_active {
+                    crate::policy::sync_for_active_profile(&storage, browser)?;
+                }
+                Ok(json!({
+                    "name": meta.name,
+                    "proxy": meta.proxy.as_ref().map(|p| p.to_string()),
+                    "active_profile": is_active,
+                }))
+            })
+            .await
+        }
+        "proxy_clear" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let meta = storage.set_proxy(&name, browser, None)?;
+                let is_active =
+                    storage.get_current_active(browser)?.as_deref() == Some(meta.name.as_str());
+                if is_active {
+                    crate::policy::sync_for_active_profile(&storage, browser)?;
+                }
+                Ok(json!({"name": meta.name, "proxy": Value::Null, "active_profile": is_active}))
+            })
+            .await
+        }
+        "backup" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let keep = args.get("keep").and_then(Value::as_u64).map(|k| k as usize);
+            let full = args.get("full").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let outcome =
+                    crate::backup::create_backup(&storage, browser, &name, full, keep, None)?;
+                Ok(json!({
+                    "path": outcome.path.display().to_string(),
+                    "archive_bytes": outcome.archive_bytes,
+                    "profile_bytes": outcome.profile_bytes,
+                    "pruned": outcome.pruned,
+                }))
+            })
+            .await
+        }
+        "export_session" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let profile = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument 'name'".into()))?
+                .to_string();
+            let domain = args
+                .get("domain")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument 'domain'".into()))?
+                .to_string();
+            let allow_raw = args
+                .get("allow_raw")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let bundle = crate::session::export_session(&storage, browser, &profile, &domain)?;
+                if allow_raw {
+                    Ok(serde_json::to_value(&bundle)?)
+                } else {
+                    let masked_cookies: Vec<_> = bundle
+                        .cookies
+                        .iter()
+                        .map(|c| {
+                            json!({
+                                "name": c.name,
+                                "domain": c.domain,
+                                "path": c.path,
+                                "value": c.masked_value(),
+                                "expires_utc": c.expires_utc,
+                                "is_secure": c.is_secure,
+                                "is_httponly": c.is_httponly,
+                                "samesite": c.samesite,
+                            })
+                        })
+                        .collect();
+                    Ok(json!({
+                        "version": bundle.version,
+                        "browser": bundle.browser,
+                        "profile": bundle.profile,
+                        "domain": bundle.domain,
+                        "exported_at": bundle.exported_at,
+                        "cookies": masked_cookies,
+                        "note": "Values masked for security; set allow_raw=true to request plaintext"
+                    }))
+                }
+            })
+            .await
+        }
+        other => Err(BmError::Other(format!("unknown tool '{other}'"))),
+    }
+}
