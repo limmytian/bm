@@ -114,5 +114,34 @@ pub fn tool_definitions() -> Vec<Tool> {
         Tool::new("lease_list", "List all active agent leases across profiles for a browser", schema(json!({"properties": {
             "browser": browser_enum
         }}), &[])),
+        Tool::new("create_profile", "Create a new clean browser profile, optionally seeded from a template", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile name (alphanumeric, dash, underscore)"},
+            "browser": browser_enum,
+            "note": {"type": "string", "description": "Optional note or description for this profile"},
+            "template": {"type": "string", "description": "Optional template bundle to seed extensions and preferences from"}
+        }}), &["name"])),
+        Tool::new("clone_profile", "Clone an existing browser profile into a new profile (preserving login sessions)", schema(json!({"properties": {
+            "src": {"type": "string", "description": "Source profile name to copy from"},
+            "dst": {"type": "string", "description": "Destination profile name to create"},
+            "browser": browser_enum,
+            "full": {"type": "boolean", "description": "Copy regenerable caches too"},
+            "no_proxy": {"type": "boolean", "description": "Do not carry over the source profile's proxy"}
+        }}), &["src", "dst"])),
+        Tool::new("delete_profile", "Delete a browser profile and its data directory (refuses if leased or running)", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile to delete"},
+            "browser": browser_enum
+        }}), &["name"])),
+        Tool::new("open_temp_profile", "Launch an ephemeral sandbox profile that is completely purged and deleted when the browser exits", schema(json!({"properties": {
+            "browser": browser_enum,
+            "template": {"type": "string", "description": "Optional template bundle to seed from"},
+            "urls": {"type": "array", "items": {"type": "string"}, "description": "URLs to open"},
+            "cdp": {"type": "boolean", "description": "Enable CDP on a loopback port and return endpoint"}
+        }}), &[])),
+        Tool::new("template_list", "List all saved profile templates (extensions and preferences bundles)", schema(json!({"properties": {
+            "browser": browser_enum
+        }}), &[])),
+        Tool::new("template_inspect", "Inspect details of a saved profile template", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Template name to inspect"}
+        }}), &["name"])),
     ]
 }

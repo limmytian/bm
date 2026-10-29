@@ -443,6 +443,143 @@ pub async fn dispatch_tool(
             })
             .await
         }
+        "create_profile" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let note = args.get("note").and_then(Value::as_str).map(str::to_string);
+            let template = args
+                .get("template")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let (meta, applied_template) = storage.create_profile_with_template(
+                    &name,
+                    note.as_deref(),
+                    browser,
+                    template.as_deref(),
+                )?;
+                Ok(json!({
+                    "name": meta.name,
+                    "browser": meta.browser,
+                    "description": meta.description,
+                    "created_at": meta.created_at,
+                    "updated_at": meta.updated_at,
+                    "template": applied_template.map(|t| t.name),
+                }))
+            })
+            .await
+        }
+        "clone_profile" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let src = args
+                .get("src")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: src".into()))?
+                .to_string();
+            let dst = args
+                .get("dst")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: dst".into()))?
+                .to_string();
+            let full = args.get("full").and_then(Value::as_bool).unwrap_or(false);
+            let no_proxy = args
+                .get("no_proxy")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let (meta, bytes_copied) = storage.clone_profile(&src, &dst, browser, full, !no_proxy)?;
+                Ok(json!({
+                    "name": meta.name,
+                    "browser": meta.browser,
+                    "description": meta.description,
+                    "bytes_copied": bytes_copied,
+                    "created_at": meta.created_at,
+                }))
+            })
+            .await
+        }
+        "delete_profile" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                storage.delete_profile(&name, browser)?;
+                Ok(json!({"deleted": name}))
+            })
+            .await
+        }
+        "open_temp_profile" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let template = args
+                .get("template")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let urls = args
+                .get("urls")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| BmError::Other("urls must be strings".into()))
+                })
+                .transpose()?
+                .unwrap_or_default();
+            let cdp = args.get("cdp").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let outcome = crate::open::OpenLauncher::launch_temp(
+                    &storage,
+                    browser,
+                    template.as_deref(),
+                    &urls,
+                    cdp,
+                )?;
+                Ok(json!({
+                    "temp_id": outcome.temp_id,
+                    "temp_dir": outcome.temp_dir.display().to_string(),
+                    "browser_pid": outcome.browser_pid,
+                    "cdp_endpoint": outcome.cdp_endpoint,
+                }))
+            })
+            .await
+        }
+        "template_list" => {
+            let browser = pick_browser(default_browser, &args)?;
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let templates = crate::template::list_templates(&storage, Some(browser))?;
+                Ok(serde_json::to_value(&templates)?)
+            })
+            .await
+        }
+        "template_inspect" => {
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let all = crate::template::list_templates(&storage, None)?;
+                let found = all
+                    .into_iter()
+                    .find(|t| t.name == name)
+                    .ok_or(BmError::TemplateNotFound { name })?;
+                Ok(serde_json::to_value(&found)?)
+            })
+            .await
+        }
         other => Err(BmError::Other(format!("unknown tool '{other}'"))),
     }
 }

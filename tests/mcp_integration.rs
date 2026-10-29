@@ -295,3 +295,47 @@ fn mcp_lease_tools_lifecycle_and_guarding() {
     assert_eq!(err_acq["isError"], true);
     assert!(err_acq["content"][0]["text"].as_str().unwrap().contains("not found"));
 }
+
+#[test]
+fn mcp_profile_lifecycle_and_template_tools() {
+    let mut session = McpSession::spawn();
+    session.initialize();
+
+    // 1. Create a profile
+    let create_res = session.call_tool(
+        "create_profile",
+        serde_json::json!({
+            "name": "auto-agent-sandbox",
+            "note": "Created by test agent"
+        }),
+    );
+    assert_eq!(create_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(create_res["structuredContent"]["name"], "auto-agent-sandbox");
+
+    // 2. Clone the profile
+    let clone_res = session.call_tool(
+        "clone_profile",
+        serde_json::json!({
+            "src": "auto-agent-sandbox",
+            "dst": "auto-agent-sandbox-copy"
+        }),
+    );
+    assert_eq!(clone_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(clone_res["structuredContent"]["name"], "auto-agent-sandbox-copy");
+
+    // 3. Delete the clone
+    let del_res = session.call_tool(
+        "delete_profile",
+        serde_json::json!({"name": "auto-agent-sandbox-copy"}),
+    );
+    assert_eq!(del_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(del_res["structuredContent"]["deleted"], "auto-agent-sandbox-copy");
+
+    // 4. Template tools
+    let tpl_list = session.call_tool("template_list", serde_json::json!({}));
+    assert_eq!(tpl_list.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert!(tpl_list["structuredContent"].is_array());
+
+    let tpl_err = session.call_tool("template_inspect", serde_json::json!({"name": "nonexistent"}));
+    assert_eq!(tpl_err["isError"], true);
+}
