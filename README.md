@@ -386,12 +386,31 @@ bm delete old-profile
 bm delete test-profile --yes   # Skip confirmation prompt
 ```
 
-### Built-in MCP Server (`bm mcp`)
-`bm mcp` runs a Model Context Protocol server over stdio (v1 transport), giving agent hosts schema-driven access to bm without shell access. It is a thin wrapper over the same modules the CLI uses — the running-browser and active-profile guards apply unchanged — and returns the same JSON shapes documented in docs/json.md.
+### Built-in MCP Server (`bm mcp` & `bm serve`)
+`bm` includes a built-in Model Context Protocol (MCP) server that exposes browser sandboxing and orchestration capabilities to AI agents over both **stdio** and **Streamable HTTP/SSE**.
 
-Tools: `list_profiles`, `current`, `status`, `open_profile` (name, browser, urls, `cdp` — CDP stays strictly opt-in per call), `switch` (force), `proxy_get`, `proxy_set`, `proxy_clear`, `backup`. No destructive tools (delete is deliberately not exposed).
+#### 1. Transports
+- **Stdio Mode (Default)**: Runs as a child-process tool for local agents (Claude Desktop, Cursor, ZCode, Task Weaver).
+  ```bash
+  bm mcp
+  ```
+- **HTTP / SSE Mode**: Runs as a daemon server for remote agents, Docker containers, and multi-client setups.
+  ```bash
+  bm mcp --transport http --port 3808
+  # Dedicated daemon command with Bearer token authentication:
+  bm serve --host 127.0.0.1 --port 3808 --token "my-secret-token"
+  ```
+  *Note: Binding to non-loopback addresses (`0.0.0.0`) strictly requires `--token` or `BM_AUTH_TOKEN`.*
 
-Register it in your MCP host config:
+#### 2. Tool Catalog (22 Tools)
+- **Profile Lifecycle**: `create_profile`, `clone_profile`, `delete_profile`, `open_temp_profile` (ephemeral sandbox auto-purged on exit), `template_list`, `template_inspect`.
+- **Workspaces & Groups**: `group_list`, `group_open` (parallel launch with isolated CDP ports), `group_close`, `group_create`, `group_delete`.
+- **Agent Leases & Locks**: `lease_acquire` (exclusive lock with TTL & purpose), `lease_release`, `lease_renew`, `lease_list`. Destructive tools (`switch`, `proxy_set`, `backup`, `delete_profile`) enforce active lease guards.
+- **Diagnostics & Browser Control**: `cdp_list`, `cdp_close` (`Browser.close` protocol command), `doctor_diagnose`, `proxy_test`.
+- **Existing Essentials**: `list_profiles`, `current`, `status`, `open_profile`, `switch`, `proxy_get`, `proxy_set`, `proxy_clear`, `backup`, `export_session`.
+
+#### 3. Client Registration
+**Local Stdio (Claude Desktop / Cursor)**:
 ```json
 {
   "mcpServers": {
@@ -399,7 +418,20 @@ Register it in your MCP host config:
   }
 }
 ```
-This snippet works for Claude Desktop (`claude_desktop_config.json`), Cursor (`mcp.json`), and ZCode. For Task Weaver: `tw mcp register-local bm -- bm mcp`. stdout carries only JSON-RPC frames; warnings go to stderr.
+
+**Remote HTTP / SSE (Task Weaver / Remote Agent)**:
+```json
+{
+  "mcpServers": {
+    "bm": {
+      "url": "http://127.0.0.1:3808/sse",
+      "headers": {
+        "Authorization": "Bearer my-secret-token"
+      }
+    }
+  }
+}
+```
 
 ### Scriptable JSON Output
 `bm --json` gives every read-oriented command a stable, documented JSON form (human output is untouched): `list`, `current`, `doctor`, `proxy show`, `status`, and `size`. The shapes are pinned by golden tests and versioned in [docs/json.md](docs/json.md) — external tooling and `bm mcp` (v1) rely on them verbatim:
