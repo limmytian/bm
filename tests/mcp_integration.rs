@@ -234,3 +234,45 @@ fn mcp_proxy_tools_mutate_state() {
     let result = session.call_tool("list_profiles", serde_json::json!({}));
     assert!(result["structuredContent"]["profiles"].is_array());
 }
+
+#[test]
+fn mcp_group_tools_lifecycle() {
+    let mut session = McpSession::spawn();
+    session.initialize();
+
+    // 1. group_list initially empty
+    let list_res = session.call_tool("group_list", serde_json::json!({}));
+    assert_eq!(list_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert!(list_res["structuredContent"].is_array());
+
+    // 2. group_create
+    let create_res = session.call_tool(
+        "group_create",
+        serde_json::json!({
+            "name": "dev_cluster",
+            "description": "Development cluster workspace"
+        }),
+    );
+    assert_eq!(create_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(create_res["structuredContent"]["name"], "dev_cluster");
+
+    // 3. group_list now contains dev_cluster
+    let list_res2 = session.call_tool("group_list", serde_json::json!({}));
+    assert_eq!(list_res2.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    let groups = list_res2["structuredContent"].as_array().unwrap();
+    assert!(groups.iter().any(|g| g["name"] == "dev_cluster"));
+
+    // 4. group_close on empty/inactive group succeeds cleanly
+    let close_res = session.call_tool("group_close", serde_json::json!({"name": "dev_cluster"}));
+    assert_eq!(close_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(close_res["structuredContent"]["group"], "dev_cluster");
+
+    // 5. group_delete
+    let del_res = session.call_tool("group_delete", serde_json::json!({"name": "dev_cluster"}));
+    assert_eq!(del_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(del_res["structuredContent"]["deleted"], "dev_cluster");
+
+    // 6. group_delete again fails with error
+    let del_res2 = session.call_tool("group_delete", serde_json::json!({"name": "dev_cluster"}));
+    assert_eq!(del_res2["isError"], true);
+}

@@ -69,5 +69,27 @@ pub fn tool_definitions() -> Vec<Tool> {
             "browser": browser_enum,
             "allow_raw": {"type": "boolean", "description": "Explicitly allow unmasked plaintext cookie values (requires security authorization)"}
         }}), &["name", "domain"])),
+        Tool::new("group_list", "List all multi-profile session groups/workspaces with member profiles and running statuses", schema(json!({"properties": {}}), &[])),
+        Tool::new("group_open", "Launch all browser profiles in a workspace group side-by-side with isolated data dirs, proxies, and optional CDP endpoints", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Name of the group to launch"},
+            "cdp": {"type": "boolean", "description": "Enable CDP with isolated OS-assigned ports for launched profiles"},
+            "urls": {"type": "array", "items": {"type": "string"}, "description": "Extra URLs to open in every launched profile"}
+        }}), &["name"])),
+        Tool::new("group_close", "Gracefully close all running browser profiles in a workspace group", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Name of the group to close"},
+            "force": {"type": "boolean", "description": "Force kill browser instances if graceful close times out"}
+        }}), &["name"])),
+        Tool::new("group_create", "Create a new multi-profile session group/workspace", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Group name (alphanumeric, dash, underscore)"},
+            "description": {"type": "string", "description": "Optional description for the group"},
+            "members": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of initial member profiles in format 'profile' or 'browser:profile'"
+            }
+        }}), &["name"])),
+        Tool::new("group_delete", "Delete a multi-profile session group/workspace (underlying profiles remain intact)", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Name of the group to delete"}
+        }}), &["name"])),
     ]
 }

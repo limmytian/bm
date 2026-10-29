@@ -261,6 +261,109 @@ pub async fn dispatch_tool(
             })
             .await
         }
+        "group_list" => {
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let reports = crate::group::status_all_groups(&storage)?;
+                Ok(serde_json::to_value(&reports)?)
+            })
+            .await
+        }
+        "group_open" => {
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let cdp = args.get("cdp").and_then(Value::as_bool).unwrap_or(false);
+            let urls = args
+                .get("urls")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| BmError::Other("urls must be strings".into()))
+                })
+                .transpose()?
+                .unwrap_or_default();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let report = crate::group::open_group(&storage, &name, &urls, cdp)?;
+                Ok(serde_json::to_value(&report)?)
+            })
+            .await
+        }
+        "group_close" => {
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let report = crate::group::close_group(&storage, &name, force)?;
+                Ok(serde_json::to_value(&report)?)
+            })
+            .await
+        }
+        "group_create" => {
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let description = args
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let members: Vec<String> = args
+                .get("members")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(str::to_string))
+                        .collect::<Option<Vec<_>>>()
+                        .ok_or_else(|| BmError::Other("members must be strings".into()))
+                })
+                .transpose()?
+                .unwrap_or_default();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let mut g = crate::group::create_group(&storage, &name, description.as_deref())?;
+                for m in members {
+                    let (b, profile) = if let Some((b_str, p_str)) = m.split_once(':') {
+                        (parse_browser(b_str)?, p_str)
+                    } else {
+                        (default_browser, m.as_str())
+                    };
+                    g = crate::group::add_member(
+                        &storage,
+                        &name,
+                        b,
+                        profile,
+                        Vec::new(),
+                        None,
+                    )?;
+                }
+                Ok(serde_json::to_value(&g)?)
+            })
+            .await
+        }
+        "group_delete" => {
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::group::delete_group(&storage, &name)?;
+                Ok(json!({"deleted": name}))
+            })
+            .await
+        }
         other => Err(BmError::Other(format!("unknown tool '{other}'"))),
     }
 }
