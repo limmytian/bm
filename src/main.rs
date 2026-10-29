@@ -928,15 +928,56 @@ fn run(cli: Cli) -> Result<()> {
                 clap_complete::generate(shell, &mut cmd, "bm", &mut std::io::stdout());
             }
 
-            Commands::Mcp => {
-                // stdio MCP server: stdout is protocol-only from here on.
-                let rt = tokio::runtime::Builder::new_current_thread()
+            Commands::Mcp {
+                transport,
+                port,
+                host,
+                token,
+                cors,
+            } => {
+                let rt = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
                     .map_err(|e| {
                         crate::error::BmError::Other(format!("cannot start async runtime: {e}"))
                     })?;
-                rt.block_on(crate::mcp::serve(cli.browser))?;
+                match transport {
+                    cli::McpTransport::Stdio => {
+                        rt.block_on(crate::mcp::serve(cli.browser))?;
+                    }
+                    cli::McpTransport::Http => {
+                        let server = crate::mcp::BmMcpServer::new(cli.browser);
+                        let config = crate::mcp::HttpTransportConfig {
+                            host,
+                            port,
+                            token,
+                            cors_origin: cors,
+                        };
+                        rt.block_on(crate::mcp::http::serve_http(server, config))?;
+                    }
+                }
+            }
+
+            Commands::Serve {
+                port,
+                host,
+                token,
+                cors,
+            } => {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| {
+                        crate::error::BmError::Other(format!("cannot start async runtime: {e}"))
+                    })?;
+                let server = crate::mcp::BmMcpServer::new(cli.browser);
+                let config = crate::mcp::HttpTransportConfig {
+                    host,
+                    port,
+                    token,
+                    cors_origin: cors,
+                };
+                rt.block_on(crate::mcp::http::serve_http(server, config))?;
             }
 
             Commands::Manpage => {

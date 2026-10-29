@@ -266,6 +266,24 @@ Masked values are returned by default for safety:
 }
 ```
 
+## MCP HTTP Transport & Health Endpoint
+
+When running `bm mcp --transport http` or `bm serve`:
+
+### `GET /health`
+
+```json
+{
+  "status": "ok",
+  "service": "bm-mcp",
+  "version": "0.0.9"
+}
+```
+
+### Protocol Endpoints
+- `GET /sse`: Server-Sent Events stream for receiving protocol notifications and server messages.
+- `POST /messages?sessionId=<SESSION_ID>`: JSON-RPC 2.0 endpoint for client requests and notifications.
+
 ## Versioning
 
 - Schema version 1: initial documented set (this file), bm 0.0.5+.

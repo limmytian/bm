@@ -6,6 +6,8 @@
 
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 use crate::browser::Browser;
 use crate::error::{BmError, Result};
 use crate::proxy::ProxyConfig;
@@ -73,7 +75,7 @@ fn describe_ureq_error(e: ureq::Error) -> String {
 }
 
 /// Outcome of one profile's egress verification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EgressCheck {
     /// IP observed through the proxy (None when the proxied request failed).
     pub exit_ip: Option<String>,

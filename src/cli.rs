@@ -25,6 +25,16 @@ pub enum ScheduleAction {
     Status,
 }
 
+/// Transport protocol for `bm mcp`.
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+pub enum McpTransport {
+    /// Standard input/output JSON-RPC (standard desktop/agent child-process mode)
+    #[default]
+    Stdio,
+    /// Streamable HTTP / Server-Sent Events (SSE) network transport
+    Http,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "bm",
@@ -252,8 +262,47 @@ pub enum Commands {
     #[command(hide = true)]
     Manpage,
 
-    /// Run the built-in stdio MCP server (agent tool interface)
-    Mcp,
+    /// Run the built-in MCP server (agent tool interface)
+    Mcp {
+        /// Communication transport (stdio or http)
+        #[arg(long, value_enum, default_value_t = McpTransport::Stdio)]
+        transport: McpTransport,
+
+        /// Listen port for HTTP transport mode
+        #[arg(short, long, default_value_t = 3808)]
+        port: u16,
+
+        /// Bind host for HTTP transport mode
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Authentication token (mandatory when binding to non-loopback addresses)
+        #[arg(long, env = "BM_AUTH_TOKEN")]
+        token: Option<String>,
+
+        /// Allowed CORS origin (e.g. "*" or specific domain)
+        #[arg(long)]
+        cors: Option<String>,
+    },
+
+    /// Run the long-running background daemon and MCP HTTP server
+    Serve {
+        /// Listen port (defaults to 3808)
+        #[arg(short, long, default_value_t = 3808)]
+        port: u16,
+
+        /// Bind host (defaults to 127.0.0.1)
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        /// Authentication token (mandatory when binding to non-loopback addresses)
+        #[arg(long, env = "BM_AUTH_TOKEN")]
+        token: Option<String>,
+
+        /// Allowed CORS origin
+        #[arg(long)]
+        cors: Option<String>,
+    },
 
     /// Manage CDP endpoints created with `bm open --cdp`
     Cdp {
@@ -353,7 +402,7 @@ pub enum LeaseAction {
         profile: String,
 
         /// Name/identifier of the agent or holder acquiring the lease
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         holder: String,
 
         /// Lease duration in seconds (default: 300)
@@ -379,7 +428,7 @@ pub enum LeaseAction {
         profile: String,
 
         /// Holder identifier (required to prevent releasing someone else's lease unless --force)
-        #[arg(short, long)]
+        #[arg(short = 'a', long)]
         holder: Option<String>,
 
         /// Break the lease even if held by a different agent
