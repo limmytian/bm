@@ -580,6 +580,106 @@ pub async fn dispatch_tool(
             })
             .await
         }
+        "cdp_list" => {
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let _ = crate::cdp::purge_dead_entries(&storage)?;
+                let registry = crate::cdp::load_registry(&storage);
+                let mut list = Vec::new();
+                for (key, entry) in registry {
+                    if crate::cdp::port_alive(entry.port) {
+                        list.push(json!({
+                            "key": key,
+                            "port": entry.port,
+                            "ws_url": entry.ws_url(),
+                            "pid": entry.pid,
+                            "started_at": entry.started_at,
+                        }));
+                    }
+                }
+                Ok(json!({"endpoints": list}))
+            })
+            .await
+        }
+        "cdp_close" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let key = format!("{browser}:{name}");
+                let mut registry = crate::cdp::load_registry(&storage);
+                let entry = registry.remove(&key).ok_or_else(|| {
+                    BmError::Other(format!("no CDP endpoint recorded for {key}"))
+                })?;
+                if crate::cdp::port_alive(entry.port) {
+                    crate::cdp::close_via_browser_close(&entry)?;
+                    let deadline =
+                        std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while crate::cdp::port_alive(entry.port)
+                        && std::time::Instant::now() < deadline
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+                crate::cdp::remove_entry(&storage, browser, &name)?;
+                Ok(json!({
+                    "closed": name,
+                    "browser": browser,
+                    "still_alive": crate::cdp::port_alive(entry.port),
+                }))
+            })
+            .await
+        }
+        "doctor_diagnose" => {
+            let browser = pick_browser(default_browser, &args)?;
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::report::doctor_json(&storage, browser, false)
+            })
+            .await
+        }
+        "proxy_test" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let targets =
+                    crate::proxy_test::resolve_targets(&storage, browser, Some(&name))?;
+                let (_, proxy_opt) = targets
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| BmError::ProfileNotFound {
+                        name: name.clone(),
+                        browser: browser.display_name().to_string(),
+                    })?;
+                if let Some(proxy) = proxy_opt {
+                    let fetcher = crate::proxy_test::UreqFetcher;
+                    let check = crate::proxy_test::check_egress(
+                        &fetcher,
+                        "https://api.ipify.org",
+                        &proxy,
+                        std::time::Duration::from_secs(5),
+                    );
+                    Ok(serde_json::to_value(&check)?)
+                } else {
+                    Ok(json!({
+                        "profile": name,
+                        "has_proxy": false,
+                        "effective": false,
+                        "note": "profile has no proxy configured (direct connection)"
+                    }))
+                }
+            })
+            .await
+        }
         other => Err(BmError::Other(format!("unknown tool '{other}'"))),
     }
 }

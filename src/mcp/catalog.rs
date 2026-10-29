@@ -143,5 +143,17 @@ pub fn tool_definitions() -> Vec<Tool> {
         Tool::new("template_inspect", "Inspect details of a saved profile template", schema(json!({"properties": {
             "name": {"type": "string", "description": "Template name to inspect"}
         }}), &["name"])),
+        Tool::new("cdp_list", "List all active Chrome DevTools Protocol (CDP) endpoints across profiles", schema(json!({"properties": {}}), &[])),
+        Tool::new("cdp_close", "Gracefully close a browser instance behind a CDP endpoint using Browser.close protocol command", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile whose CDP endpoint to close"},
+            "browser": browser_enum
+        }}), &["name"])),
+        Tool::new("doctor_diagnose", "Run system diagnostics to check browser installation, dangling symlinks, stale locks, and configuration health", schema(json!({"properties": {
+            "browser": browser_enum
+        }}), &[])),
+        Tool::new("proxy_test", "Test a profile's egress proxy connectivity, verifying proxied external IP and latency", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile to test"},
+            "browser": browser_enum
+        }}), &["name"])),
     ]
 }

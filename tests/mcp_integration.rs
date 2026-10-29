@@ -339,3 +339,27 @@ fn mcp_profile_lifecycle_and_template_tools() {
     let tpl_err = session.call_tool("template_inspect", serde_json::json!({"name": "nonexistent"}));
     assert_eq!(tpl_err["isError"], true);
 }
+
+#[test]
+fn mcp_diagnostics_and_cdp_tools() {
+    let mut session = McpSession::spawn();
+    session.initialize();
+
+    // 1. cdp_list
+    let cdp_res = session.call_tool("cdp_list", serde_json::json!({}));
+    assert_eq!(cdp_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert!(cdp_res["structuredContent"]["endpoints"].is_array());
+
+    // 2. cdp_close for non-existent endpoint
+    let close_err = session.call_tool("cdp_close", serde_json::json!({"name": "ghost"}));
+    assert_eq!(close_err["isError"], true);
+
+    // 3. doctor_diagnose
+    let doc_res = session.call_tool("doctor_diagnose", serde_json::json!({}));
+    assert_eq!(doc_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert!(doc_res["structuredContent"]["issues"].is_array());
+
+    // 4. proxy_test on non-existent profile fails gracefully
+    let proxy_err = session.call_tool("proxy_test", serde_json::json!({"name": "ghost"}));
+    assert_eq!(proxy_err["isError"], true);
+}

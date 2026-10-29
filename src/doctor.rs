@@ -386,6 +386,9 @@ fn check_policy_conflict(
 fn check_permissions(storage: &StorageManager, issues: &mut Vec<Issue>) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
+    if !storage.base_dir().exists() {
+        return Ok(());
+    }
     let mode = fs::metadata(storage.base_dir())?.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         issues.push(Issue {
