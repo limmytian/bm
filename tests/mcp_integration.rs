@@ -276,3 +276,22 @@ fn mcp_group_tools_lifecycle() {
     let del_res2 = session.call_tool("group_delete", serde_json::json!({"name": "dev_cluster"}));
     assert_eq!(del_res2["isError"], true);
 }
+
+#[test]
+fn mcp_lease_tools_lifecycle_and_guarding() {
+    let mut session = McpSession::spawn();
+    session.initialize();
+
+    // 1. Initial lease_list is empty
+    let list_res = session.call_tool("lease_list", serde_json::json!({}));
+    assert_eq!(list_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert!(list_res["structuredContent"].is_array());
+
+    // 2. Acquire lease on missing profile fails with tool error
+    let err_acq = session.call_tool(
+        "lease_acquire",
+        serde_json::json!({"name": "ghost", "holder": "agent-1"}),
+    );
+    assert_eq!(err_acq["isError"], true);
+    assert!(err_acq["content"][0]["text"].as_str().unwrap().contains("not found"));
+}

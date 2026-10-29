@@ -153,6 +153,7 @@ pub async fn dispatch_tool(
                 .map(str::to_string);
             blocking(move || {
                 let storage = StorageManager::new()?;
+                crate::lease::guard_lease(&storage, browser, &name, false)?;
                 let cfg = crate::proxy::ProxyConfig::parse(&server_str, bypass.as_deref())?;
                 let meta = storage.set_proxy(&name, browser, Some(cfg))?;
                 let is_active =
@@ -177,6 +178,7 @@ pub async fn dispatch_tool(
                 .to_string();
             blocking(move || {
                 let storage = StorageManager::new()?;
+                crate::lease::guard_lease(&storage, browser, &name, false)?;
                 let meta = storage.set_proxy(&name, browser, None)?;
                 let is_active =
                     storage.get_current_active(browser)?.as_deref() == Some(meta.name.as_str());
@@ -198,6 +200,7 @@ pub async fn dispatch_tool(
             let full = args.get("full").and_then(Value::as_bool).unwrap_or(false);
             blocking(move || {
                 let storage = StorageManager::new()?;
+                crate::lease::guard_lease(&storage, browser, &name, false)?;
                 let outcome =
                     crate::backup::create_backup(&storage, browser, &name, full, keep, None)?;
                 Ok(json!({
@@ -361,6 +364,82 @@ pub async fn dispatch_tool(
                 let storage = StorageManager::new()?;
                 crate::group::delete_group(&storage, &name)?;
                 Ok(json!({"deleted": name}))
+            })
+            .await
+        }
+        "lease_acquire" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let holder = args
+                .get("holder")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: holder".into()))?
+                .to_string();
+            let ttl = args.get("ttl").and_then(Value::as_u64);
+            let purpose = args
+                .get("purpose")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let opts = crate::lease::ClaimOptions {
+                    holder: &holder,
+                    ttl_secs: ttl,
+                    reason: purpose.as_deref(),
+                    force,
+                    pid: None,
+                };
+                let lease = crate::lease::claim_lease(&storage, browser, &name, opts)?;
+                Ok(serde_json::to_value(&lease)?)
+            })
+            .await
+        }
+        "lease_release" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let holder = args
+                .get("holder")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: holder".into()))?
+                .to_string();
+            let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                crate::lease::release_lease(&storage, browser, &name, Some(&holder), force)?;
+                Ok(json!({"released": name, "holder": holder}))
+            })
+            .await
+        }
+        "lease_renew" => {
+            let browser = pick_browser(default_browser, &args)?;
+            let name = args
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| BmError::Other("missing required argument: name".into()))?
+                .to_string();
+            let ttl = args.get("ttl").and_then(Value::as_u64);
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let lease = crate::lease::heartbeat_lease(&storage, browser, &name, ttl)?;
+                Ok(serde_json::to_value(&lease)?)
+            })
+            .await
+        }
+        "lease_list" => {
+            let browser = pick_browser(default_browser, &args)?;
+            blocking(move || {
+                let storage = StorageManager::new()?;
+                let leases = crate::lease::list_leases(&storage, Some(browser), None)?;
+                Ok(serde_json::to_value(&leases)?)
             })
             .await
         }

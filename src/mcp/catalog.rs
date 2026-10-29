@@ -91,5 +91,28 @@ pub fn tool_definitions() -> Vec<Tool> {
         Tool::new("group_delete", "Delete a multi-profile session group/workspace (underlying profiles remain intact)", schema(json!({"properties": {
             "name": {"type": "string", "description": "Name of the group to delete"}
         }}), &["name"])),
+        Tool::new("lease_acquire", "Acquire an exclusive lease lock on a profile for an agent to prevent concurrent modifications or destructive actions", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile to lock"},
+            "holder": {"type": "string", "description": "Agent identifier or caller identity"},
+            "browser": browser_enum,
+            "ttl": {"type": "integer", "minimum": 1, "description": "Lease duration in seconds (defaults to 300)"},
+            "purpose": {"type": "string", "description": "Task description or reason for lease"},
+            "force": {"type": "boolean", "description": "Break any existing active lease held by another agent"}
+        }}), &["name", "holder"])),
+        Tool::new("lease_release", "Release an agent's active lease lock on a browser profile", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile to unlock"},
+            "holder": {"type": "string", "description": "Agent identifier who currently holds the lease"},
+            "browser": browser_enum,
+            "force": {"type": "boolean", "description": "Force release even if holder does not match"}
+        }}), &["name", "holder"])),
+        Tool::new("lease_renew", "Renew or extend the TTL of an active lease lock held by an agent", schema(json!({"properties": {
+            "name": {"type": "string", "description": "Profile whose lease to renew"},
+            "holder": {"type": "string", "description": "Agent identifier holding the lease"},
+            "browser": browser_enum,
+            "ttl": {"type": "integer", "minimum": 1, "description": "New lease duration in seconds from now (defaults to 300)"}
+        }}), &["name", "holder"])),
+        Tool::new("lease_list", "List all active agent leases across profiles for a browser", schema(json!({"properties": {
+            "browser": browser_enum
+        }}), &[])),
     ]
 }
