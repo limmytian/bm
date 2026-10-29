@@ -1,7 +1,7 @@
 use rmcp::ServiceExt;
 
-use crate::error::BmError;
 use super::BmMcpServer;
+use crate::error::BmError;
 
 /// Serve the MCP server over stdio until the client disconnects.
 pub async fn serve_stdio(server: BmMcpServer) -> Result<(), BmError> {

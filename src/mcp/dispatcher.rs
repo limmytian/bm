@@ -341,14 +341,7 @@ pub async fn dispatch_tool(
                     } else {
                         (default_browser, m.as_str())
                     };
-                    g = crate::group::add_member(
-                        &storage,
-                        &name,
-                        b,
-                        profile,
-                        Vec::new(),
-                        None,
-                    )?;
+                    g = crate::group::add_member(&storage, &name, b, profile, Vec::new(), None)?;
                 }
                 Ok(serde_json::to_value(&g)?)
             })
@@ -493,7 +486,8 @@ pub async fn dispatch_tool(
                 .unwrap_or(false);
             blocking(move || {
                 let storage = StorageManager::new()?;
-                let (meta, bytes_copied) = storage.clone_profile(&src, &dst, browser, full, !no_proxy)?;
+                let (meta, bytes_copied) =
+                    storage.clone_profile(&src, &dst, browser, full, !no_proxy)?;
                 Ok(json!({
                     "name": meta.name,
                     "browser": meta.browser,
@@ -612,15 +606,13 @@ pub async fn dispatch_tool(
                 let storage = StorageManager::new()?;
                 let key = format!("{browser}:{name}");
                 let mut registry = crate::cdp::load_registry(&storage);
-                let entry = registry.remove(&key).ok_or_else(|| {
-                    BmError::Other(format!("no CDP endpoint recorded for {key}"))
-                })?;
+                let entry = registry
+                    .remove(&key)
+                    .ok_or_else(|| BmError::Other(format!("no CDP endpoint recorded for {key}")))?;
                 if crate::cdp::port_alive(entry.port) {
                     crate::cdp::close_via_browser_close(&entry)?;
-                    let deadline =
-                        std::time::Instant::now() + std::time::Duration::from_secs(5);
-                    while crate::cdp::port_alive(entry.port)
-                        && std::time::Instant::now() < deadline
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                    while crate::cdp::port_alive(entry.port) && std::time::Instant::now() < deadline
                     {
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
@@ -651,15 +643,15 @@ pub async fn dispatch_tool(
                 .to_string();
             blocking(move || {
                 let storage = StorageManager::new()?;
-                let targets =
-                    crate::proxy_test::resolve_targets(&storage, browser, Some(&name))?;
-                let (_, proxy_opt) = targets
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| BmError::ProfileNotFound {
-                        name: name.clone(),
-                        browser: browser.display_name().to_string(),
-                    })?;
+                let targets = crate::proxy_test::resolve_targets(&storage, browser, Some(&name))?;
+                let (_, proxy_opt) =
+                    targets
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| BmError::ProfileNotFound {
+                            name: name.clone(),
+                            browser: browser.display_name().to_string(),
+                        })?;
                 if let Some(proxy) = proxy_opt {
                     let fetcher = crate::proxy_test::UreqFetcher;
                     let check = crate::proxy_test::check_egress(

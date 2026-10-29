@@ -22,8 +22,8 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::error::BmError;
 use super::BmMcpServer;
+use crate::error::BmError;
 
 /// Configuration options for launching the MCP HTTP server.
 #[derive(Debug, Clone)]
@@ -82,12 +82,10 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 /// Serve the MCP server over HTTP/SSE until cancelled or interrupted.
-pub async fn serve_http(
-    server: BmMcpServer,
-    config: HttpTransportConfig,
-) -> Result<(), BmError> {
+pub async fn serve_http(server: BmMcpServer, config: HttpTransportConfig) -> Result<(), BmError> {
     // Security check: non-loopback binding requires mandatory token authentication.
-    let is_loopback = config.host == "127.0.0.1" || config.host == "localhost" || config.host == "::1";
+    let is_loopback =
+        config.host == "127.0.0.1" || config.host == "localhost" || config.host == "::1";
     if !is_loopback && config.token.is_none() {
         return Err(BmError::Other(
             "Security violation: binding to non-loopback address without an authentication token is prohibited. \

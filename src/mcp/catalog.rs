@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use rmcp::model::{JsonObject, Tool};
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 /// Build an input schema: object type with the given properties and
 /// required keys, closed to additional properties.

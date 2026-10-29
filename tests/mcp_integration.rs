@@ -242,7 +242,10 @@ fn mcp_group_tools_lifecycle() {
 
     // 1. group_list initially empty
     let list_res = session.call_tool("group_list", serde_json::json!({}));
-    assert_eq!(list_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        list_res.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert!(list_res["structuredContent"].is_array());
 
     // 2. group_create
@@ -253,23 +256,41 @@ fn mcp_group_tools_lifecycle() {
             "description": "Development cluster workspace"
         }),
     );
-    assert_eq!(create_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        create_res
+            .get("isError")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert_eq!(create_res["structuredContent"]["name"], "dev_cluster");
 
     // 3. group_list now contains dev_cluster
     let list_res2 = session.call_tool("group_list", serde_json::json!({}));
-    assert_eq!(list_res2.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        list_res2
+            .get("isError")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     let groups = list_res2["structuredContent"].as_array().unwrap();
     assert!(groups.iter().any(|g| g["name"] == "dev_cluster"));
 
     // 4. group_close on empty/inactive group succeeds cleanly
     let close_res = session.call_tool("group_close", serde_json::json!({"name": "dev_cluster"}));
-    assert_eq!(close_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        close_res
+            .get("isError")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert_eq!(close_res["structuredContent"]["group"], "dev_cluster");
 
     // 5. group_delete
     let del_res = session.call_tool("group_delete", serde_json::json!({"name": "dev_cluster"}));
-    assert_eq!(del_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        del_res.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert_eq!(del_res["structuredContent"]["deleted"], "dev_cluster");
 
     // 6. group_delete again fails with error
@@ -284,7 +305,10 @@ fn mcp_lease_tools_lifecycle_and_guarding() {
 
     // 1. Initial lease_list is empty
     let list_res = session.call_tool("lease_list", serde_json::json!({}));
-    assert_eq!(list_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        list_res.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert!(list_res["structuredContent"].is_array());
 
     // 2. Acquire lease on missing profile fails with tool error
@@ -293,7 +317,10 @@ fn mcp_lease_tools_lifecycle_and_guarding() {
         serde_json::json!({"name": "ghost", "holder": "agent-1"}),
     );
     assert_eq!(err_acq["isError"], true);
-    assert!(err_acq["content"][0]["text"].as_str().unwrap().contains("not found"));
+    assert!(err_acq["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("not found"));
 }
 
 #[test]
@@ -309,8 +336,16 @@ fn mcp_profile_lifecycle_and_template_tools() {
             "note": "Created by test agent"
         }),
     );
-    assert_eq!(create_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
-    assert_eq!(create_res["structuredContent"]["name"], "auto-agent-sandbox");
+    assert_eq!(
+        create_res
+            .get("isError")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        create_res["structuredContent"]["name"],
+        "auto-agent-sandbox"
+    );
 
     // 2. Clone the profile
     let clone_res = session.call_tool(
@@ -320,23 +355,43 @@ fn mcp_profile_lifecycle_and_template_tools() {
             "dst": "auto-agent-sandbox-copy"
         }),
     );
-    assert_eq!(clone_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
-    assert_eq!(clone_res["structuredContent"]["name"], "auto-agent-sandbox-copy");
+    assert_eq!(
+        clone_res
+            .get("isError")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        clone_res["structuredContent"]["name"],
+        "auto-agent-sandbox-copy"
+    );
 
     // 3. Delete the clone
     let del_res = session.call_tool(
         "delete_profile",
         serde_json::json!({"name": "auto-agent-sandbox-copy"}),
     );
-    assert_eq!(del_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
-    assert_eq!(del_res["structuredContent"]["deleted"], "auto-agent-sandbox-copy");
+    assert_eq!(
+        del_res.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        del_res["structuredContent"]["deleted"],
+        "auto-agent-sandbox-copy"
+    );
 
     // 4. Template tools
     let tpl_list = session.call_tool("template_list", serde_json::json!({}));
-    assert_eq!(tpl_list.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        tpl_list.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert!(tpl_list["structuredContent"].is_array());
 
-    let tpl_err = session.call_tool("template_inspect", serde_json::json!({"name": "nonexistent"}));
+    let tpl_err = session.call_tool(
+        "template_inspect",
+        serde_json::json!({"name": "nonexistent"}),
+    );
     assert_eq!(tpl_err["isError"], true);
 }
 
@@ -347,7 +402,10 @@ fn mcp_diagnostics_and_cdp_tools() {
 
     // 1. cdp_list
     let cdp_res = session.call_tool("cdp_list", serde_json::json!({}));
-    assert_eq!(cdp_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        cdp_res.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert!(cdp_res["structuredContent"]["endpoints"].is_array());
 
     // 2. cdp_close for non-existent endpoint
@@ -356,7 +414,10 @@ fn mcp_diagnostics_and_cdp_tools() {
 
     // 3. doctor_diagnose
     let doc_res = session.call_tool("doctor_diagnose", serde_json::json!({}));
-    assert_eq!(doc_res.get("isError").and_then(serde_json::Value::as_bool), Some(false));
+    assert_eq!(
+        doc_res.get("isError").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
     assert!(doc_res["structuredContent"]["issues"].is_array());
 
     // 4. proxy_test on non-existent profile fails gracefully
