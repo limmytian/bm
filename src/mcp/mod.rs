@@ -4,7 +4,10 @@
 
 pub mod catalog;
 pub mod dispatcher;
+pub mod http;
 pub mod stdio;
+
+pub use http::HttpTransportConfig;
 
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
