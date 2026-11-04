@@ -10,7 +10,9 @@
 
 <p align="center">
   <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue" alt="Platform: macOS | Linux | Windows">
   <a href="https://github.com/limmytian/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-limmytian%2Ftap-orange.svg" alt="Homebrew Tap"></a>
+  <a href="https://github.com/microsoft/winget-pkgs/pull/470391"><img src="https://img.shields.io/badge/WinGet-limmytian.bm-blue.svg" alt="WinGet: limmytian.bm"></a>
 </p>
 
 `bm` is an ultra-fast, lightweight CLI written in Rust to manage, isolate, switch, and launch browser user profiles (sessions, cookies, local storage, history) in a **conda-like workflow**.
@@ -22,14 +24,14 @@
 ## 🌟 Key Features
 
 * **Centralized Profile Storage**: All profiles and session databases are organized neatly under `~/.bm/profiles/<browser>/<name>`.
-* **Symlink-Driven Profile Switching (Conda-like)**:
-  * Running `bm switch <name>` atomically swaps the browser's default user data path with a symlink pointing to your chosen profile.
-  * Any subsequent launch—whether from macOS Dock, Spotlight, Launchpad, or external URL clicks—will automatically use the activated profile with zero command-line flags.
+* **Symlink / NTFS Junction-Driven Profile Switching (Conda-like)**:
+  * Running `bm switch <name>` atomically swaps the browser's default user data path (POSIX symlink on macOS/Linux, NTFS Junction on Windows without UAC) pointing to your chosen profile.
+  * Any subsequent launch—whether from macOS Dock, Windows Start/Taskbar, Spotlight, Launchpad, or external URL clicks—will automatically use the activated profile with zero command-line flags.
 * **Safe Automatic First-Run Migration**: When switching for the first time, your pre-existing browser data is automatically safely backed up as profile `original`.
 * **Running Process Guard**: Warns or terminates running browser instances to prevent SQLite database locks when switching.
-* **Standalone Desktop Shortcuts**: `bm shortcut <name>` generates an independent macOS `.app` bundle or Linux launcher script, allowing you to run multiple accounts side-by-side without mutating the globally active symlink.
+* **Standalone Desktop Shortcuts**: `bm shortcut <name>` generates an independent macOS `.app` bundle, Linux `.desktop` launcher script, or Windows `.lnk` ShellLink, allowing you to run multiple accounts side-by-side without mutating the globally active link.
 * **Multi-Browser Support**: Seamlessly manage Chrome, Edge, Brave, and Chromium environments with `--browser chrome|edge|brave|chromium`. Firefox and Arc are intentionally out of scope — their profile models differ from the Chromium user-data-dir layout bm is built around.
-* **Per-Profile Egress Proxy**: Route each environment through its own SOCKS5/HTTP(S) proxy with WebRTC leak protection and SOCKS5 DNS pinning. Honored by standalone shortcuts out of the box and by globally activated launches via Chrome/Edge managed policy (macOS).
+* **Per-Profile Egress Proxy**: Route each environment through its own SOCKS5/HTTP(S) proxy with WebRTC leak protection and SOCKS5 DNS pinning. Honored by standalone shortcuts out of the box and by globally activated launches via Chrome/Edge managed policy (macOS defaults, Windows registry, Linux desktop overrides).
 
 ---
 
@@ -37,11 +39,32 @@
 
 ### 1. Installation
 
-#### Via Homebrew (Recommended on macOS/Linux)
+#### Windows
 
-```bash
-brew install limmytian/tap/bm
-```
+* **Via WinGet (Microsoft Windows Package Manager)**:
+  ```powershell
+  winget install limmytian.bm
+  ```
+
+* **Via Scoop**:
+  ```powershell
+  scoop install https://github.com/limmytian/bm/releases/latest/download/bm.json
+  ```
+
+* **Manual / Direct Download**:
+  Download `bm-*-windows-x64.zip` from [GitHub Releases](https://github.com/limmytian/bm/releases/latest), unzip, and place `bm.exe` into your `$PATH` (such as `$env:LOCALAPPDATA\Microsoft\WindowsApps` or any folder in your System PATH).
+
+  Or in a single PowerShell command:
+  ```powershell
+  irm https://github.com/limmytian/bm/releases/download/v0.0.10/bm-0.0.10-windows-x64.zip -OutFile "$env:TEMP\bm.zip"; Expand-Archive "$env:TEMP\bm.zip" "$env:TEMP\bm_extracted" -Force; Copy-Item "$env:TEMP\bm_extracted\bm.exe" "$env:LOCALAPPDATA\Microsoft\WindowsApps\bm.exe" -Force
+  ```
+
+#### macOS / Linux
+
+* **Via Homebrew**:
+  ```bash
+  brew install limmytian/tap/bm
+  ```
 
 #### Via Cargo (From Source)
 
@@ -139,7 +162,7 @@ bm rename work work-2026 --regen-shortcuts   # also regenerate stale standalone 
 Standalone shortcuts referencing the old name are detected and reported; regenerate them with `bm shortcut <new>` or the flag above.
 
 ### Generate Standalone Desktop Shortcut
-Create a standalone application launcher (e.g., `Chrome (work).app` on macOS) that can be pinned to your Dock:
+Create a standalone application launcher (e.g., `Chrome (work).app` on macOS, `.lnk` shortcut on Windows desktop, or `.desktop` launcher on Linux) that can be pinned to your Dock, Taskbar, or Start Menu:
 ```bash
 bm shortcut work
 bm shortcut staging --browser edge
@@ -278,7 +301,7 @@ BM_BACKUP_PASSPHRASE=... bm backup --all --encrypt   # non-interactive runs
 **Encryption threat model, stated plainly:** archives contain your full login state, so `--encrypt` seals them with age v1 (scrypt passphrase recipient). The passphrase comes from `BM_BACKUP_PASSPHRASE` or a hidden prompt — it is **never accepted on the command line**. bm does **no key management**: the passphrase is the only key, a lost passphrase means a lost backup, and only the passphrase holder can restore. `bm restore` and `bm backup --verify` detect encrypted archives (`.tar.zst.age`) automatically and prompt/decrypt on the fly; plain and encrypted snapshots share the same `--keep` retention pool.
 
 #### Scheduled Auto-Backup
-Install a daily `bm backup --all` via launchd (macOS) or a systemd user timer (Linux):
+Install a daily `bm backup --all` via launchd (macOS), systemd user timer (Linux), or Windows Task Scheduler:
 ```bash
 bm backup --schedule install --keep 7    # daily at 03:00, per selected --browser
 bm backup --schedule status
@@ -342,6 +365,7 @@ Everything marked `report-only` needs manual action; the command prints the sugg
 `bm` automatically discovers installed browsers across standard directories and dynamic search indices:
 * **macOS**: Probes `/Applications`, `~/Applications`, and queries macOS Spotlight (`mdfind`) by Bundle Identifier (`com.google.Chrome`, `com.microsoft.edgemac`, `com.brave.Browser`, `org.chromium.Chromium`).
 * **Linux**: Searches `$PATH`, `/snap/bin`, `/usr/bin`, and `/usr/local/bin`.
+* **Windows**: Scans standard installation roots (`Program Files`, `Program Files (x86)`, `LOCALAPPDATA`, and `$PATH`).
 
 To target custom Chromium engines, Canary/Dev/Beta channels, or portable builds, set per-browser environment variables (or the global fallback):
 ```bash
