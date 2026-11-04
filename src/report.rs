@@ -222,7 +222,7 @@ mod tests {
 
         // Managed active profile.
         storage.create_profile("work", None, browser).unwrap();
-        std::os::unix::fs::symlink(storage.profile_dir(browser, "work"), &default_link).unwrap();
+        crate::storage::create_dir_link(&storage.profile_dir(browser, "work"), &default_link).unwrap();
         storage
             .set_proxy(
                 "work",
@@ -236,10 +236,10 @@ mod tests {
         assert_eq!(v["proxy"], "http://p:8080");
 
         // External activation.
-        std::fs::remove_file(&default_link).unwrap();
+        crate::storage::remove_dir_link(&default_link).unwrap();
         let outside = tmp.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
-        std::os::unix::fs::symlink(&outside, &default_link).unwrap();
+        crate::storage::create_dir_link(&outside, &default_link).unwrap();
         let v = current_json(&storage, browser).unwrap();
         assert!(v["active"].as_str().unwrap().starts_with("external ("));
         assert_eq!(v["managed"], false);
@@ -252,7 +252,7 @@ mod tests {
         let browser = Browser::Chrome;
         let link = tmp.path().join("default-link");
         let storage = storage.with_default_dir_override(link.clone());
-        std::os::unix::fs::symlink(tmp.path().join("missing"), &link).unwrap();
+        crate::storage::create_dir_link(&tmp.path().join("missing"), &link).unwrap();
 
         let v = doctor_json(&storage, browser, false).unwrap();
         assert_eq!(v["browser"], "chrome");
@@ -355,7 +355,7 @@ mod tests {
         assert!(v["doctor"].is_object());
 
         // With an active profile the key appears.
-        std::os::unix::fs::symlink(storage.profile_dir(browser, "work"), &default_link).unwrap();
+        crate::storage::create_dir_link(&storage.profile_dir(browser, "work"), &default_link).unwrap();
         let v = status_json(&storage, browser).unwrap();
         assert_eq!(v["active_profile"], "work");
     }

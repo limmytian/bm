@@ -819,6 +819,7 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
     fn setup() -> (tempfile::TempDir, StorageManager) {
@@ -907,6 +908,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn backup_all_skips_running_profiles_and_snapshots_the_rest() {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;
@@ -1193,6 +1195,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn symlinks_survive_the_roundtrip() {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;

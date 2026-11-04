@@ -99,6 +99,7 @@ pub fn locate_cookie_db(profile_dir: &Path) -> Result<PathBuf> {
 }
 
 /// Retrieve the Chromium Safe Storage master password from the OS.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn get_os_master_password(browser: Browser) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
@@ -167,6 +168,7 @@ pub fn get_os_master_password(browser: Browser) -> Result<String> {
 }
 
 /// Derive the 128-bit AES key using PBKDF2-HMAC-SHA1.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn derive_key(password: &str, iterations: u32) -> [u8; 16] {
     let mut key = [0u8; 16];
     pbkdf2::pbkdf2_hmac::<sha1::Sha1>(password.as_bytes(), b"saltysalt", iterations, &mut key);
@@ -174,6 +176,7 @@ pub fn derive_key(password: &str, iterations: u32) -> [u8; 16] {
 }
 
 /// Decrypt a Chromium cookie payload using AES-128-CBC.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn decrypt_cookie_value(encrypted_val: &[u8], key: &[u8; 16]) -> Result<String> {
     if encrypted_val.is_empty() {
         return Ok(String::new());
@@ -217,7 +220,238 @@ pub fn encrypt_mock_cookie(plaintext: &str, key: &[u8; 16]) -> Vec<u8> {
     out
 }
 
+#[cfg(windows)]
+fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>> {
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptUnprotectData, CRYPT_INTEGER_BLOB,
+    };
+    use std::ptr::null_mut;
+
+    let mut in_blob = CRYPT_INTEGER_BLOB {
+        cbData: data.len() as u32,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut out_blob = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: null_mut(),
+    };
+
+    let success = unsafe {
+        CryptUnprotectData(
+            &mut in_blob,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            0,
+            &mut out_blob,
+        )
+    };
+
+    if success == 0 || out_blob.pbData.is_null() {
+        return Err(BmError::Other(
+            "Windows CryptUnprotectData failed to decrypt master key".into(),
+        ));
+    }
+
+    let decrypted = unsafe {
+        std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec()
+    };
+    unsafe {
+        windows_sys::Win32::Foundation::LocalFree(out_blob.pbData as _);
+    }
+    Ok(decrypted)
+}
+
+#[cfg(windows)]
+pub fn get_windows_master_key(browser: Browser, profile_dir: &Path) -> Result<Vec<u8>> {
+    let candidates = [
+        profile_dir.join("Local State"),
+        profile_dir.parent().unwrap_or(profile_dir).join("Local State"),
+    ];
+    let mut local_state_path = None;
+    for c in &candidates {
+        if c.exists() {
+            local_state_path = Some(c.clone());
+            break;
+        }
+    }
+    let local_state_path = match local_state_path {
+        Some(p) => p,
+        None => {
+            let default_dir = browser.default_data_dir().unwrap_or_default();
+            if default_dir.join("Local State").exists() {
+                default_dir.join("Local State")
+            } else {
+                return Err(BmError::Other(format!(
+                    "Local State file not found for {}",
+                    profile_dir.display()
+                )));
+            }
+        }
+    };
+
+    let content = fs::read_to_string(&local_state_path)?;
+    let json: serde_json::Value = serde_json::from_str(&content)?;
+    let enc_key_b64 = json["os_crypt"]["encrypted_key"]
+        .as_str()
+        .ok_or_else(|| BmError::Other("Missing os_crypt.encrypted_key in Local State".into()))?;
+
+    use base64::Engine;
+    let enc_key = base64::engine::general_purpose::STANDARD
+        .decode(enc_key_b64)
+        .map_err(|e| BmError::Other(format!("Base64 decode failed for master key: {e}")))?;
+
+    if !enc_key.starts_with(b"DPAPI") {
+        return Err(BmError::Other("Invalid DPAPI encrypted key header".into()));
+    }
+
+    let encrypted_data = &enc_key[5..];
+    dpapi_decrypt(encrypted_data)
+}
+
+#[cfg(windows)]
+pub fn decrypt_cookie_value_windows(encrypted_val: &[u8], key: &[u8]) -> Result<String> {
+    if encrypted_val.is_empty() {
+        return Ok(String::new());
+    }
+    if !encrypted_val.starts_with(b"v10") && !encrypted_val.starts_with(b"v20") {
+        if let Ok(dec) = dpapi_decrypt(encrypted_val) {
+            return String::from_utf8(dec)
+                .map_err(|e| BmError::Other(format!("Cookie not valid UTF-8: {e}")));
+        }
+        return Ok(String::new());
+    }
+
+    if encrypted_val.len() < 3 + 12 + 16 {
+        return Ok(String::new());
+    }
+    let nonce = &encrypted_val[3..15];
+    let ciphertext_and_tag = &encrypted_val[15..];
+
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::{Aes256Gcm, Nonce};
+
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| BmError::Other(format!("Failed to initialize Aes256Gcm: {e}")))?;
+    let nonce = Nonce::from_slice(nonce);
+    let decrypted = cipher
+        .decrypt(nonce, ciphertext_and_tag)
+        .map_err(|e| BmError::Other(format!("AES-GCM decryption failed: {e}")))?;
+
+    String::from_utf8(decrypted)
+        .map_err(|e| BmError::Other(format!("Decrypted cookie is not valid UTF-8: {e}")))
+}
+
+#[cfg(windows)]
+pub fn extract_scoped_cookies_windows(
+    db_path: &Path,
+    domain_filter: &str,
+    key: &[u8],
+) -> Result<Vec<ExportedCookie>> {
+    let clean_domain = validate_domain(domain_filter)?;
+    let dot_domain = if clean_domain.starts_with('.') {
+        clean_domain.clone()
+    } else {
+        format!(".{clean_domain}")
+    };
+    let bare_domain = clean_domain.trim_start_matches('.').to_string();
+    let like_subdomain = format!("%.{bare_domain}");
+
+    let tmp_dir = tempfile::tempdir()?;
+    let tmp_db = tmp_dir.path().join("Cookies");
+    fs::copy(db_path, &tmp_db)?;
+
+    let wal = db_path.with_file_name("Cookies-wal");
+    if wal.exists() {
+        let _ = fs::copy(&wal, tmp_dir.path().join("Cookies-wal"));
+    }
+    let shm = db_path.with_file_name("Cookies-shm");
+    if shm.exists() {
+        let _ = fs::copy(&shm, tmp_dir.path().join("Cookies-shm"));
+    }
+
+    let conn = Connection::open_with_flags(
+        &tmp_db,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+    )
+    .map_err(|e| BmError::Other(format!("Failed to open Cookies database: {e}")))?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite \
+             FROM cookies \
+             WHERE host_key = ?1 OR host_key = ?2 OR host_key LIKE ?3 \
+             ORDER BY host_key, name",
+        )
+        .map_err(|e| BmError::Other(format!("Failed to query cookies table: {e}")))?;
+
+    struct RawRow {
+        host_key: String,
+        name: String,
+        value: String,
+        encrypted_value: Vec<u8>,
+        path: String,
+        expires_utc: i64,
+        is_secure: bool,
+        is_httponly: bool,
+        samesite: i32,
+    }
+
+    let rows = stmt
+        .query_map(
+            rusqlite::params![bare_domain, dot_domain, like_subdomain],
+            |row| {
+                Ok(RawRow {
+                    host_key: row.get(0)?,
+                    name: row.get(1)?,
+                    value: row.get(2)?,
+                    encrypted_value: row.get(3)?,
+                    path: row.get(4)?,
+                    expires_utc: row.get(5)?,
+                    is_secure: row.get::<_, i64>(6)? != 0,
+                    is_httponly: row.get::<_, i64>(7)? != 0,
+                    samesite: row.get(8)?,
+                })
+            },
+        )
+        .map_err(|e| BmError::Other(format!("Failed to execute cookie query: {e}")))?;
+
+    let mut cookies = Vec::new();
+
+    for row_res in rows {
+        let r = row_res.map_err(|e| BmError::Other(format!("Failed to read cookie row: {e}")))?;
+        let host = r.host_key.to_lowercase();
+        let matches =
+            host == bare_domain || host == dot_domain || host.ends_with(&format!(".{bare_domain}"));
+
+        if !matches {
+            continue;
+        }
+
+        let final_value = if !r.encrypted_value.is_empty() {
+            decrypt_cookie_value_windows(&r.encrypted_value, key)?
+        } else {
+            r.value
+        };
+
+        cookies.push(ExportedCookie {
+            name: r.name,
+            domain: r.host_key,
+            path: r.path,
+            value: final_value,
+            expires_utc: r.expires_utc,
+            is_secure: r.is_secure,
+            is_httponly: r.is_httponly,
+            samesite: r.samesite,
+        });
+    }
+
+    Ok(cookies)
+}
+
 /// Extract and decrypt cookies strictly scoped to the specified domain.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn extract_scoped_cookies(
     db_path: &Path,
     domain_filter: &str,
@@ -347,16 +581,24 @@ pub fn export_session(
     }
 
     let cookie_db = locate_cookie_db(&profile_dir)?;
-    let master_pass = get_os_master_password(browser)?;
 
-    // macOS uses 1003 iterations; Linux uses 1
-    #[cfg(target_os = "macos")]
-    let iterations = 1003;
-    #[cfg(not(target_os = "macos"))]
-    let iterations = 1;
+    #[cfg(windows)]
+    let cookies = {
+        let key = get_windows_master_key(browser, &profile_dir)?;
+        extract_scoped_cookies_windows(&cookie_db, &clean_domain, &key)?
+    };
 
-    let key = derive_key(&master_pass, iterations);
-    let cookies = extract_scoped_cookies(&cookie_db, &clean_domain, &key)?;
+    #[cfg(not(windows))]
+    let cookies = {
+        let master_pass = get_os_master_password(browser)?;
+        #[cfg(target_os = "macos")]
+        let iterations = 1003;
+        #[cfg(not(target_os = "macos"))]
+        let iterations = 1;
+
+        let key = derive_key(&master_pass, iterations);
+        extract_scoped_cookies(&cookie_db, &clean_domain, &key)?
+    };
 
     Ok(SessionBundle {
         version: 1,

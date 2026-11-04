@@ -322,6 +322,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn profiles_report_running_proxy_and_backup() {
         let (_tmp, storage) = setup();
         let browser = Browser::Chrome;
@@ -386,7 +387,7 @@ mod tests {
         // Dangling default-dir symlink: fixable doctor finding.
         let default_link = tmp.path().join("default-link");
         let storage = storage.with_default_dir_override(default_link.clone());
-        std::os::unix::fs::symlink(tmp.path().join("missing"), &default_link).unwrap();
+        crate::storage::create_dir_link(&tmp.path().join("missing"), &default_link).unwrap();
 
         let report = collect_status(&storage, browser).unwrap();
         assert_eq!(report.doctor.issues.len(), 1);

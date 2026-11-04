@@ -8,6 +8,7 @@
 //! are plain strings assembled here and unit-tested; the platform helpers
 //! only load/unload them.
 
+#[cfg(not(target_os = "windows"))]
 use std::fs;
 #[cfg(target_os = "macos")]
 use std::path::Path;
@@ -257,11 +258,16 @@ pub fn install(storage: &StorageManager, browser: Browser, keep: Option<usize>) 
         install_linux(storage, browser, keep)
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        install_windows(storage, browser, keep)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         let _ = (storage, browser, keep);
         Err(BmError::UnsupportedPlatform(
-            "scheduled backups require macOS (launchd) or Linux (systemd user timers)".into(),
+            "scheduled backups require macOS (launchd), Linux (systemd), or Windows (Task Scheduler)".into(),
         ))
     }
 }
@@ -328,11 +334,16 @@ pub fn uninstall(_storage: &StorageManager, browser: Browser) -> Result<String> 
         uninstall_linux(browser)
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        uninstall_windows(browser)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         let _ = browser;
         Err(BmError::UnsupportedPlatform(
-            "scheduled backups require macOS (launchd) or Linux (systemd user timers)".into(),
+            "scheduled backups require macOS (launchd), Linux (systemd), or Windows (Task Scheduler)".into(),
         ))
     }
 }
@@ -392,11 +403,16 @@ pub fn status(storage: &StorageManager, browser: Browser) -> Result<String> {
         status_linux(storage, browser)
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(target_os = "windows")]
+    {
+        status_windows(storage, browser)
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         let _ = (storage, browser);
         Err(BmError::UnsupportedPlatform(
-            "scheduled backups require macOS (launchd) or Linux (systemd user timers)".into(),
+            "scheduled backups require macOS (launchd), Linux (systemd), or Windows (Task Scheduler)".into(),
         ))
     }
 }
@@ -422,24 +438,70 @@ fn status_macos(storage: &StorageManager, browser: Browser) -> Result<String> {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn status_linux(_storage: &StorageManager, browser: Browser) -> Result<String> {
-    {
-        let timer = systemd_unit_dir().join(format!("{}.timer", unit_name(browser)));
-        if !timer.exists() {
-            return Ok(format!("not installed (expected {})", timer.display()));
-        }
-        let enabled = Command::new("systemctl")
-            .arg("--user")
-            .args(["is-enabled", &format!("{}.timer", unit_name(browser))])
-            .output()
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-            .unwrap_or_else(|_| "unknown".into());
-        Ok(format!(
-            "installed ({}), timer {enabled}; logs: journalctl --user -u {}",
-            timer.display(),
-            unit_name(browser)
-        ))
+#[cfg(target_os = "windows")]
+fn win_task_name(browser: Browser) -> String {
+    format!("bm-backup-{browser}")
+}
+
+#[cfg(target_os = "windows")]
+fn install_windows(_storage: &StorageManager, browser: Browser, keep: usize) -> Result<String> {
+    let task = win_task_name(browser);
+    let exe = current_exe()?;
+    let action = format!("\"{}\" backup --all --keep {} --browser {}", exe, keep, browser);
+
+    let output = Command::new("schtasks")
+        .args([
+            "/create",
+            "/tn",
+            &task,
+            "/tr",
+            &action,
+            "/sc",
+            "daily",
+            "/st",
+            "03:00",
+            "/f",
+        ])
+        .output()
+        .map_err(|e| BmError::Other(format!("Failed to execute schtasks: {e}")))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(BmError::Other(format!("schtasks create failed: {err}")));
+    }
+
+    Ok(format!(
+        "Installed daily backup task '{task}' via Windows Task Scheduler (daily at 03:00)."
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn uninstall_windows(browser: Browser) -> Result<String> {
+    let task = win_task_name(browser);
+    let output = Command::new("schtasks")
+        .args(["/delete", "/tn", &task, "/f"])
+        .output()
+        .map_err(|e| BmError::Other(format!("Failed to execute schtasks: {e}")))?;
+
+    if !output.status.success() {
+        return Err(BmError::Other(format!("Scheduled task '{task}' was not found or could not be removed.")));
+    }
+
+    Ok(format!("Removed scheduled backup task '{task}'."))
+}
+
+#[cfg(target_os = "windows")]
+fn status_windows(_storage: &StorageManager, browser: Browser) -> Result<String> {
+    let task = win_task_name(browser);
+    let output = Command::new("schtasks")
+        .args(["/query", "/tn", &task])
+        .output()
+        .map_err(|e| BmError::Other(format!("Failed to query schtasks: {e}")))?;
+
+    if output.status.success() {
+        Ok(format!("Task Scheduler task '{task}' is installed."))
+    } else {
+        Ok(format!("not installed (task '{task}')"))
     }
 }
 

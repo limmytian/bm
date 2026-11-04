@@ -66,6 +66,84 @@ pub fn relative_time(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     }
 }
 
+/// Check whether a path is a directory link (symlink or NTFS junction).
+pub fn is_dir_link(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        if junction::exists(path).unwrap_or(false) {
+            return true;
+        }
+    }
+    fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// Create a directory link pointing to target (symlink on Unix, NTFS junction on Windows).
+pub fn create_dir_link(target: &Path, link: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        if link.exists() || is_dir_link(link) {
+            let _ = remove_dir_link(link);
+            if link.exists() {
+                let _ = fs::remove_dir(link);
+            }
+        }
+        junction::create(target, link).map_err(|e| {
+            BmError::Other(format!(
+                "Failed to create NTFS junction from {} to {}: {e}",
+                link.display(),
+                target.display()
+            ))
+        })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Err(BmError::UnsupportedPlatform(
+            "Directory linking is unsupported on this platform".into(),
+        ))
+    }
+}
+
+/// Safely remove a directory link without touching the target folder contents.
+pub fn remove_dir_link(link: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        if junction::exists(link).unwrap_or(false) {
+            let _ = junction::delete(link);
+        }
+        if fs::symlink_metadata(link).is_ok() {
+            let _ = fs::remove_dir(link);
+        }
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        fs::remove_file(link)?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+/// Read the target of a directory link.
+pub fn read_dir_link(link: &Path) -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        if junction::exists(link).unwrap_or(false) {
+            return junction::get_target(link).map_err(|e| {
+                BmError::Other(format!("Failed to read junction {}: {e}", link.display()))
+            });
+        }
+    }
+    fs::read_link(link).map_err(|e| e.into())
+}
+
 pub struct StorageManager {
     base_dir: PathBuf,
     /// Test seam: overrides the browser's default user-data dir (the global
@@ -77,7 +155,10 @@ pub struct StorageManager {
 impl StorageManager {
     /// Initialize StorageManager using ~/.bm as base directory.
     pub fn new() -> Result<Self> {
-        let home = dirs::home_dir()
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .or_else(dirs::home_dir)
             .ok_or_else(|| BmError::Other("Unable to resolve home directory".into()))?;
         let base_dir = home.join(".bm");
         Ok(Self {
@@ -351,16 +432,15 @@ impl StorageManager {
         Ok((meta, tpl_meta))
     }
 
-    /// Get the currently active profile name by inspecting the browser's default user data symlink.
+    /// Get the currently active profile name by inspecting the browser's default user data symlink / junction.
     pub fn get_current_active(&self, browser: Browser) -> Result<Option<String>> {
         let default_dir = self.default_data_dir(browser)?;
-        if !default_dir.exists() && fs::symlink_metadata(&default_dir).is_err() {
+        if !default_dir.exists() && !is_dir_link(&default_dir) {
             return Ok(None);
         }
 
-        let symlink_meta = fs::symlink_metadata(&default_dir)?;
-        if symlink_meta.file_type().is_symlink() {
-            let target = fs::read_link(&default_dir)?;
+        if is_dir_link(&default_dir) {
+            let target = read_dir_link(&default_dir)?;
             let canonical_target = if target.is_relative() {
                 if let Some(parent) = default_dir.parent() {
                     parent.join(&target)
@@ -590,12 +670,12 @@ impl StorageManager {
         let default_dir = self.default_data_dir(browser)?;
         let mut backup_created = None;
 
-        if fs::symlink_metadata(&default_dir).is_ok() {
+        if is_dir_link(&default_dir) {
+            // Safely remove symlink/junction without deleting target folder contents
+            remove_dir_link(&default_dir)?;
+        } else if default_dir.exists() {
             let meta = fs::symlink_metadata(&default_dir)?;
-            if meta.file_type().is_symlink() {
-                // Safely remove symlink without deleting target folder contents
-                fs::remove_file(&default_dir)?;
-            } else if meta.is_dir() {
+            if meta.is_dir() {
                 // Real directory: back up original data so user loses nothing!
                 let backup_name = "original";
                 let backup_dir = self.profile_dir(browser, backup_name);
@@ -635,14 +715,8 @@ impl StorageManager {
             }
         }
 
-        // Create atomic symlink
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target_dir, &default_dir)?;
-
-        #[cfg(not(unix))]
-        return Err(BmError::UnsupportedPlatform(
-            "Symlink creation requires Unix-based operating system".into(),
-        ));
+        // Create atomic symlink / junction
+        create_dir_link(&target_dir, &default_dir)?;
 
         // Best-effort: the switch itself succeeded; a state-write hiccup
         // must not fail the command.
@@ -804,17 +878,9 @@ impl StorageManager {
         // Keep the global symlink pointing at the renamed dir.
         if was_active {
             let default_dir = self.default_data_dir(browser)?;
-            let is_symlink = fs::symlink_metadata(&default_dir)
-                .map(|m| m.file_type().is_symlink())
-                .unwrap_or(false);
-            if is_symlink {
-                fs::remove_file(&default_dir)?;
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&dst_dir, &default_dir)?;
-                #[cfg(not(unix))]
-                return Err(BmError::UnsupportedPlatform(
-                    "Symlink creation requires Unix-based operating system".into(),
-                ));
+            if is_dir_link(&default_dir) {
+                remove_dir_link(&default_dir)?;
+                create_dir_link(&dst_dir, &default_dir)?;
             }
         }
 
@@ -870,9 +936,17 @@ fn copy_tree(
         let to = dst_dir.join(entry.file_name());
         let file_type = entry.file_type()?;
 
-        if file_type.is_symlink() {
+        if is_dir_link(&from) {
+            let target = read_dir_link(&from)?;
+            let _ = create_dir_link(&target, &to);
+        } else if file_type.is_symlink() {
             let target = fs::read_link(&from)?;
+            #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &to)?;
+            #[cfg(windows)]
+            {
+                let _ = std::os::windows::fs::symlink_file(&target, &to);
+            }
         } else if file_type.is_dir() {
             copied += copy_tree(&from, &to, &child_rel, skip_caches)?;
         } else if file_type.is_file() {
@@ -887,7 +961,6 @@ fn copy_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
 
     fn setup() -> (tempfile::TempDir, StorageManager) {
         let tmp = tempfile::tempdir().unwrap();
@@ -926,8 +999,9 @@ mod tests {
         fs::create_dir_all(root.join("component_crx_cache")).unwrap();
         fs::write(root.join("component_crx_cache/x.crx"), "crx").unwrap();
         fs::write(root.join("OptimizationHints"), "hints").unwrap();
-        // Symlink inside the tree must be recreated, not followed.
-        symlink("Cookies", root.join("Default/link-cookies")).unwrap();
+        // Link inside the tree must be recreated, not followed.
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink("Cookies", root.join("Default/link-cookies"));
         meta
     }
 
@@ -950,12 +1024,15 @@ mod tests {
         );
         assert!(dst_root.join("Default/Preferences").exists());
         // Symlink recreated as a symlink to the same target.
-        let link = dst_root.join("Default/link-cookies");
-        assert!(fs::symlink_metadata(&link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read_link(&link).unwrap(), Path::new("Cookies"));
+        #[cfg(unix)]
+        {
+            let link = dst_root.join("Default/link-cookies");
+            assert!(fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(fs::read_link(&link).unwrap(), Path::new("Cookies"));
+        }
         // Regenerable state absent.
         assert!(!dst_root.join("Cache").exists());
         assert!(!dst_root.join("Default/GPUCache").exists());
@@ -1076,18 +1153,14 @@ mod tests {
         storage.create_profile("a", None, browser).unwrap();
         fs::create_dir_all(storage.profile_dir(browser, "a")).unwrap();
         fs::write(storage.profile_dir(browser, "a/marker"), "x").unwrap();
-        symlink(storage.profile_dir(browser, "a"), &default_link).unwrap();
+        create_dir_link(&storage.profile_dir(browser, "a"), &default_link).unwrap();
 
         storage.rename_profile_unchecked("a", "b", browser).unwrap();
 
-        // The global symlink now resolves to the renamed dir.
-        assert!(default_link
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        // The global symlink/junction now resolves to the renamed dir.
+        assert!(is_dir_link(&default_link));
         assert_eq!(
-            fs::read_link(&default_link).unwrap(),
+            read_dir_link(&default_link).unwrap(),
             storage.profile_dir(browser, "b")
         );
         assert_eq!(

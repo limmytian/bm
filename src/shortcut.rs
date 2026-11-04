@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -115,6 +116,14 @@ impl ShortcutGenerator {
                 proxy.as_ref(),
                 dest_dir,
             )
+        } else if cfg!(target_os = "windows") {
+            Self::create_windows_shortcut(
+                browser,
+                profile_name,
+                &profile_dir,
+                proxy.as_ref(),
+                dest_dir,
+            )
         } else {
             Self::create_linux_script(
                 storage,
@@ -185,9 +194,12 @@ impl ShortcutGenerator {
         );
 
         fs::write(&launcher_path, script)?;
-        let mut perms = fs::metadata(&launcher_path)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&launcher_path, perms)?;
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&launcher_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&launcher_path, perms)?;
+        }
 
         // Try to copy Info.plist and app icon from original application bundle
         if let Ok(orig_app) = browser.app_path() {
@@ -251,9 +263,12 @@ impl ShortcutGenerator {
         );
 
         fs::write(&script_file, script)?;
-        let mut perms = fs::metadata(&script_file)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_file, perms)?;
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&script_file)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&script_file, perms)?;
+        }
 
         // Also create an XDG .desktop entry for Linux desktop environments (GNOME, KDE, etc.)
         if let Some(home) = dirs::home_dir() {
@@ -285,6 +300,54 @@ Categories=Network;WebBrowser;\n",
         }
 
         Ok(script_file)
+    }
+
+    /// Create Windows standalone shortcut (.lnk).
+    fn create_windows_shortcut(
+        browser: Browser,
+        profile_name: &str,
+        profile_dir: &Path,
+        proxy: Option<&ProxyConfig>,
+        dest_dir: Option<&Path>,
+    ) -> Result<PathBuf> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| BmError::Other("Unable to resolve home directory".into()))?;
+
+        let target_parent = match dest_dir {
+            Some(p) => p.to_path_buf(),
+            None => dirs::desktop_dir().unwrap_or_else(|| home.join("Desktop")),
+        };
+
+        if !target_parent.exists() {
+            fs::create_dir_all(&target_parent)?;
+        }
+
+        let prefix = match browser {
+            Browser::Chrome => "Chrome",
+            Browser::Edge => "Edge",
+            Browser::Brave => "Brave",
+            Browser::Chromium => "Chromium",
+        };
+
+        let shortcut_file = target_parent.join(format!("{prefix} ({profile_name}).lnk"));
+        let binary_path = browser.binary_path()?;
+
+        #[cfg(windows)]
+        {
+            let args = format!(
+                "--user-data-dir=\"{}\" --no-first-run{}",
+                profile_dir.display(),
+                proxy_launch_flags(proxy)
+            );
+            let mut sl = mslnk::ShellLink::new(&binary_path)
+                .map_err(|e| BmError::Other(format!("Failed to create shell link: {e}")))?;
+            sl.set_arguments(Some(args));
+            sl.set_icon_location(Some(binary_path.to_string_lossy().to_string()));
+            sl.create_lnk(&shortcut_file)
+                .map_err(|e| BmError::Other(format!("Failed to save .lnk shortcut: {e}")))?;
+        }
+
+        Ok(shortcut_file)
     }
 
     /// Find managed launcher artifacts that still reference the profile dir
@@ -454,6 +517,10 @@ mod tests {
         use std::fs;
 
         let tmp = tempfile::tempdir().unwrap();
+        let mock_bin = tmp.path().join("mock-chrome.exe");
+        fs::write(&mock_bin, b"mock").unwrap();
+        std::env::set_var("BM_CHROME_BIN", &mock_bin);
+
         let storage = StorageManager::with_base_dir(tmp.path().join(".bm"));
         let browser = Browser::Chrome;
         storage.create_profile("old", None, browser).unwrap();
@@ -515,16 +582,31 @@ mod tests {
         // The regenerated artifact is a shell script (Linux) or an .app
         // bundle whose launcher holds the flags (macOS).
         let artifact = &regen[0];
-        let content = if artifact.is_dir() {
-            fs::read_to_string(artifact.join("Contents/MacOS/launcher")).unwrap()
+        let new_dir_str = storage
+            .profile_dir(browser, "new")
+            .to_string_lossy()
+            .to_string();
+
+        if artifact.is_dir() {
+            let content = fs::read_to_string(artifact.join("Contents/MacOS/launcher")).unwrap();
+            assert!(content.contains(&new_dir_str));
+        } else if artifact.extension().and_then(|s| s.to_str()) == Some("lnk") {
+            let bytes = fs::read(artifact).unwrap();
+            let utf16_bytes: Vec<u8> = new_dir_str
+                .encode_utf16()
+                .flat_map(|u| u.to_le_bytes())
+                .collect();
+            let utf8_bytes = new_dir_str.as_bytes();
+            let matched = bytes
+                .windows(utf16_bytes.len())
+                .any(|w| w == utf16_bytes.as_slice())
+                || bytes.windows(utf8_bytes.len()).any(|w| w == utf8_bytes);
+            assert!(matched, "New profile directory should be referenced in .lnk shortcut");
         } else {
-            fs::read_to_string(artifact).unwrap()
-        };
-        assert!(content.contains(
-            &storage
-                .profile_dir(browser, "new")
-                .to_string_lossy()
-                .to_string()
-        ));
+            let content = fs::read_to_string(artifact).unwrap();
+            assert!(content.contains(&new_dir_str));
+        }
+
+        std::env::remove_var("BM_CHROME_BIN");
     }
 }

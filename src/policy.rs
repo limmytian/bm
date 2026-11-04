@@ -145,7 +145,51 @@ fn apply(browser: Browser, proxy: Option<&ProxyConfig>) -> Result<()> {
     sync_linux_desktop(browser, proxy)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(target_os = "windows")]
+fn apply(browser: Browser, proxy: Option<&ProxyConfig>) -> Result<()> {
+    sync_windows_policy(browser, proxy)
+}
+
+#[cfg(target_os = "windows")]
+fn sync_windows_policy(browser: Browser, proxy: Option<&ProxyConfig>) -> Result<()> {
+    use std::process::Command;
+
+    let key_path = match browser {
+        Browser::Chrome => r"HKCU\Software\Policies\Google\Chrome",
+        Browser::Edge => r"HKCU\Software\Policies\Microsoft\Edge",
+        Browser::Brave => r"HKCU\Software\Policies\BraveSoftware\Brave",
+        Browser::Chromium => r"HKCU\Software\Policies\Chromium",
+    };
+
+    match proxy {
+        Some(p) => {
+            let _ = Command::new("reg")
+                .args(["add", key_path, "/v", "ProxyMode", "/t", "REG_SZ", "/d", "fixed_servers", "/f"])
+                .output();
+            let _ = Command::new("reg")
+                .args(["add", key_path, "/v", "ProxyServer", "/t", "REG_SZ", "/d", &p.server_string(), "/f"])
+                .output();
+            if let Some(bypass) = p.bypass_string() {
+                let _ = Command::new("reg")
+                    .args(["add", key_path, "/v", "ProxyBypassList", "/t", "REG_SZ", "/d", &bypass, "/f"])
+                    .output();
+            }
+            let _ = Command::new("reg")
+                .args(["add", key_path, "/v", "WebRtcIPHandlingPolicy", "/t", "REG_SZ", "/d", "disable_non_proxied_udp", "/f"])
+                .output();
+        }
+        None => {
+            for key in MANAGED_POLICY_KEYS {
+                let _ = Command::new("reg")
+                    .args(["delete", key_path, "/v", key, "/f"])
+                    .output();
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn apply(_browser: Browser, _proxy: Option<&ProxyConfig>) -> Result<()> {
     Ok(())
 }

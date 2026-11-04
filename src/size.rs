@@ -168,7 +168,7 @@ mod tests {
         let found = scan_regenerable(tmp.path()).unwrap();
         let rels: Vec<String> = found
             .iter()
-            .map(|(p, _)| p.to_string_lossy().into_owned())
+            .map(|(p, _)| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert!(rels.contains(&"Cache".to_string()));
         assert!(rels.contains(&"Default/GPUCache".to_string()));

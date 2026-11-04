@@ -84,16 +84,19 @@ fn test_browser_properties() {
 
 #[test]
 fn test_brave_and_chromium_data_dirs() {
-    // Brave uses the BraveSoftware layout on both platforms.
     let brave = Browser::Brave.default_data_dir().unwrap();
-    assert!(brave.ends_with("BraveSoftware/Brave-Browser"));
-
-    // Chromium: ~/Library/Application Support/Chromium (macOS)
-    // or ~/.config/chromium (Linux).
-    let chromium = Browser::Chromium.default_data_dir().unwrap();
+    let brave_str = brave.to_string_lossy().replace('\\', "/");
     assert!(
-        chromium.ends_with("Application Support/Chromium")
-            || chromium.ends_with(".config/chromium"),
+        brave_str.ends_with("BraveSoftware/Brave-Browser")
+            || brave_str.ends_with("BraveSoftware/Brave-Browser/User Data")
+    );
+
+    let chromium = Browser::Chromium.default_data_dir().unwrap();
+    let chromium_str = chromium.to_string_lossy().replace('\\', "/");
+    assert!(
+        chromium_str.ends_with("Application Support/Chromium")
+            || chromium_str.ends_with(".config/chromium")
+            || chromium_str.ends_with("Chromium/User Data"),
         "unexpected Chromium data dir: {}",
         chromium.display()
     );

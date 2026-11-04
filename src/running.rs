@@ -8,6 +8,7 @@
 
 use std::fs;
 use std::path::Path;
+#[cfg(unix)]
 use std::process::Command;
 
 use crate::error::Result;
@@ -22,14 +23,40 @@ pub fn singleton_pid(profile_dir: &Path) -> Option<u32> {
     raw.rsplit('-').next()?.parse().ok()
 }
 
-/// Whether `pid` refers to a live process we can signal (`kill -0`).
+/// Whether `pid` refers to a live process we can signal.
 pub fn pid_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    #[cfg(unix)]
+    {
+        Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return false;
+            }
+            let mut exit_code = 0u32;
+            let ok = GetExitCodeProcess(handle, &mut exit_code);
+            CloseHandle(handle);
+            // STILL_ACTIVE = 259
+            ok != 0 && exit_code == 259
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 /// The live pid of the browser holding `profile_dir`, if any — so callers
@@ -50,6 +77,13 @@ mod tests {
     }
 
     #[test]
+    fn current_process_is_alive() {
+        assert!(pid_alive(std::process::id()));
+        assert!(!pid_alive(999999999));
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn singleton_lock_with_live_pid_is_detected() {
         let tmp = tempfile::tempdir().unwrap();
         // This test process is alive by construction.
@@ -64,6 +98,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn stale_lock_with_dead_pid_is_not_running() {
         let tmp = tempfile::tempdir().unwrap();
         // Any implausibly large pid fails the liveness probe (real pid
@@ -75,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn malformed_lock_target_is_ignored() {
         let tmp = tempfile::tempdir().unwrap();
         // Not a symlink: read_link fails.

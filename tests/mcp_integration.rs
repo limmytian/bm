@@ -22,6 +22,7 @@ impl McpSession {
         let child = Command::new(binary)
             .arg("mcp")
             .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

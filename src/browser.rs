@@ -164,9 +164,31 @@ impl Browser {
                 Browser::Brave => Ok(home.join(".config/BraveSoftware/Brave-Browser")),
                 Browser::Chromium => Ok(home.join(".config/chromium")),
             }
+        } else if cfg!(target_os = "windows") {
+            let local_data = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .or_else(dirs::data_local_dir)
+                .or_else(|| {
+                    std::env::var_os("USERPROFILE")
+                        .map(|p| PathBuf::from(p).join("AppData").join("Local"))
+                })
+                .or_else(|| {
+                    dirs::home_dir().map(|h| h.join("AppData").join("Local"))
+                })
+                .ok_or_else(|| {
+                    BmError::Other("Unable to resolve current user's local app data directory".into())
+                })?;
+            match self {
+                Browser::Chrome => Ok(local_data.join("Google/Chrome/User Data")),
+                Browser::Edge => Ok(local_data.join("Microsoft/Edge/User Data")),
+                Browser::Brave => {
+                    Ok(local_data.join("BraveSoftware/Brave-Browser/User Data"))
+                }
+                Browser::Chromium => Ok(local_data.join("Chromium/User Data")),
+            }
         } else {
             Err(BmError::UnsupportedPlatform(
-                "Only macOS and Linux are supported at this moment.".into(),
+                "Unsupported operating system.".into(),
             ))
         }
     }
@@ -345,9 +367,78 @@ impl Browser {
 
             // 4. Default command name fallback
             Ok((PathBuf::from(names[0]), ResolutionSource::PathEnv))
+        } else if cfg!(target_os = "windows") {
+            // 1. Check environment variables
+            for var in self.env_var_names() {
+                if let Ok(val) = std::env::var(var) {
+                    let val = val.trim();
+                    if !val.is_empty() {
+                        let path = PathBuf::from(val);
+                        if path.exists() && path.is_file() {
+                            return Ok((path, ResolutionSource::Env(var.to_string())));
+                        }
+                    }
+                }
+            }
+
+            let exe_names = match self {
+                Browser::Chrome => &["chrome.exe"][..],
+                Browser::Edge => &["msedge.exe"][..],
+                Browser::Brave => &["brave.exe"][..],
+                Browser::Chromium => &["chromium.exe", "chrome.exe"][..],
+            };
+
+            // 2. Check standard Windows Program Files / LocalAppData locations
+            let mut candidate_dirs = Vec::new();
+            if let Ok(prog_files) = std::env::var("ProgramFiles") {
+                candidate_dirs.push(PathBuf::from(prog_files));
+            }
+            if let Ok(prog_files_x86) = std::env::var("ProgramFiles(x86)") {
+                candidate_dirs.push(PathBuf::from(prog_files_x86));
+            }
+            if let Some(local_data) = std::env::var_os("LOCALAPPDATA")
+                .map(PathBuf::from)
+                .or_else(dirs::data_local_dir)
+            {
+                candidate_dirs.push(local_data);
+            }
+
+            let subpaths = match self {
+                Browser::Chrome => &["Google/Chrome/Application/chrome.exe"][..],
+                Browser::Edge => &["Microsoft/Edge/Application/msedge.exe"][..],
+                Browser::Brave => &["BraveSoftware/Brave-Browser/Application/brave.exe"][..],
+                Browser::Chromium => &[
+                    "Chromium/Application/chrome.exe",
+                    "Chromium/Application/chromium.exe",
+                ][..],
+            };
+
+            for base in &candidate_dirs {
+                for sub in subpaths {
+                    let cand = base.join(sub);
+                    if cand.is_file() {
+                        return Ok((cand.clone(), ResolutionSource::StandardSystem));
+                    }
+                }
+            }
+
+            // 3. Check PATH
+            if let Some(path_os) = std::env::var_os("PATH") {
+                for dir in std::env::split_paths(&path_os) {
+                    for name in exe_names {
+                        let candidate = dir.join(name);
+                        if candidate.is_file() {
+                            return Ok((candidate, ResolutionSource::PathEnv));
+                        }
+                    }
+                }
+            }
+
+            // 4. Default command name fallback
+            Ok((PathBuf::from(exe_names[0]), ResolutionSource::PathEnv))
         } else {
             Err(BmError::UnsupportedPlatform(
-                "Only macOS and Linux are supported.".into(),
+                "Unsupported operating system.".into(),
             ))
         }
     }
@@ -359,87 +450,119 @@ impl Browser {
 
     /// Check if there is an active running process of this browser.
     pub fn is_running(&self) -> bool {
-        let process_name = match self {
-            Browser::Chrome => {
-                if cfg!(target_os = "macos") {
-                    "Google Chrome"
-                } else {
-                    "chrome"
+        if cfg!(target_os = "windows") {
+            let exe_name = match self {
+                Browser::Chrome => "chrome.exe",
+                Browser::Edge => "msedge.exe",
+                Browser::Brave => "brave.exe",
+                Browser::Chromium => "chromium.exe",
+            };
+            let output = Command::new("tasklist")
+                .args(["/fi", &format!("IMAGENAME eq {exe_name}")])
+                .output();
+            match output {
+                Ok(out) => {
+                    let text = String::from_utf8_lossy(&out.stdout);
+                    text.to_lowercase().contains(exe_name)
                 }
+                Err(_) => false,
             }
-            Browser::Edge => {
-                if cfg!(target_os = "macos") {
-                    "Microsoft Edge"
-                } else {
-                    "msedge"
+        } else {
+            let process_name = match self {
+                Browser::Chrome => {
+                    if cfg!(target_os = "macos") {
+                        "Google Chrome"
+                    } else {
+                        "chrome"
+                    }
                 }
-            }
-            Browser::Brave => {
-                if cfg!(target_os = "macos") {
-                    "Brave Browser"
-                } else {
-                    "brave"
+                Browser::Edge => {
+                    if cfg!(target_os = "macos") {
+                        "Microsoft Edge"
+                    } else {
+                        "msedge"
+                    }
                 }
-            }
-            Browser::Chromium => {
-                if cfg!(target_os = "macos") {
-                    "Chromium"
-                } else {
-                    "chromium"
+                Browser::Brave => {
+                    if cfg!(target_os = "macos") {
+                        "Brave Browser"
+                    } else {
+                        "brave"
+                    }
                 }
-            }
-        };
+                Browser::Chromium => {
+                    if cfg!(target_os = "macos") {
+                        "Chromium"
+                    } else {
+                        "chromium"
+                    }
+                }
+            };
 
-        let output = Command::new("pgrep").arg("-f").arg(process_name).output();
+            let output = Command::new("pgrep").arg("-f").arg(process_name).output();
 
-        match output {
-            Ok(out) => out.status.success() && !out.stdout.is_empty(),
-            Err(_) => false,
+            match output {
+                Ok(out) => out.status.success() && !out.stdout.is_empty(),
+                Err(_) => false,
+            }
         }
     }
 
     /// Gracefully or forcefully terminate running browser processes.
     pub fn terminate(&self) -> Result<()> {
-        let process_name = match self {
-            Browser::Chrome => {
-                if cfg!(target_os = "macos") {
-                    "Google Chrome"
-                } else {
-                    "chrome"
+        if cfg!(target_os = "windows") {
+            let exe_name = match self {
+                Browser::Chrome => "chrome.exe",
+                Browser::Edge => "msedge.exe",
+                Browser::Brave => "brave.exe",
+                Browser::Chromium => "chromium.exe",
+            };
+            let _ = Command::new("taskkill")
+                .args(["/f", "/im", exe_name, "/t"])
+                .status();
+            Ok(())
+        } else {
+            let process_name = match self {
+                Browser::Chrome => {
+                    if cfg!(target_os = "macos") {
+                        "Google Chrome"
+                    } else {
+                        "chrome"
+                    }
                 }
-            }
-            Browser::Edge => {
-                if cfg!(target_os = "macos") {
-                    "Microsoft Edge"
-                } else {
-                    "msedge"
+                Browser::Edge => {
+                    if cfg!(target_os = "macos") {
+                        "Microsoft Edge"
+                    } else {
+                        "msedge"
+                    }
                 }
-            }
-            Browser::Brave => {
-                if cfg!(target_os = "macos") {
-                    "Brave Browser"
-                } else {
-                    "brave"
+                Browser::Brave => {
+                    if cfg!(target_os = "macos") {
+                        "Brave Browser"
+                    } else {
+                        "brave"
+                    }
                 }
-            }
-            Browser::Chromium => {
-                if cfg!(target_os = "macos") {
-                    "Chromium"
-                } else {
-                    "chromium"
+                Browser::Chromium => {
+                    if cfg!(target_os = "macos") {
+                        "Chromium"
+                    } else {
+                        "chromium"
+                    }
                 }
-            }
-        };
+            };
 
-        // Try pkill -f first (standard across macOS and modern Linux)
-        let status = Command::new("pkill").arg("-f").arg(process_name).status();
+            // Try pkill -f first (standard across macOS and modern Linux)
+            let status = Command::new("pkill").arg("-f").arg(process_name).status();
 
-        match status {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                // Fallback to killall if pkill is absent
-                let _ = Command::new("killall").arg(process_name).status();
-                Ok(())
+            match status {
+                Ok(_) => Ok(()),
+                Err(_) => {
+                    // Fallback to killall if pkill is absent
+                    let _ = Command::new("killall").arg(process_name).status();
+                    Ok(())
+                }
             }
         }
     }

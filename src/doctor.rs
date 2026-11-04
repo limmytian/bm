@@ -104,12 +104,9 @@ pub fn apply_fixes(storage: &StorageManager, issues: &[Issue]) -> Result<usize> 
     for issue in issues {
         match &issue.repair {
             Some(Repair::RemoveDanglingDefaultSymlink { path }) => {
-                // Re-verify: only ever remove a symlink, never a real dir.
-                if fs::symlink_metadata(path)
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false)
-                {
-                    fs::remove_file(path)?;
+                // Re-verify: only ever remove a symlink/junction, never a real dir.
+                if crate::storage::is_dir_link(path) {
+                    crate::storage::remove_dir_link(path)?;
                     fixed += 1;
                 }
             }
@@ -163,14 +160,11 @@ fn check_default_symlink(
     issues: &mut Vec<Issue>,
 ) -> Result<()> {
     let default_dir = storage.default_data_dir(browser)?;
-    let Ok(meta) = fs::symlink_metadata(&default_dir) else {
-        return Ok(()); // Absent or a real dir: nothing bm-managed to audit.
-    };
-    if !meta.file_type().is_symlink() {
+    if !crate::storage::is_dir_link(&default_dir) {
         return Ok(());
     }
 
-    let target = fs::read_link(&default_dir)?;
+    let target = crate::storage::read_dir_link(&default_dir)?;
     let resolved = if target.is_relative() {
         default_dir
             .parent()
@@ -411,7 +405,6 @@ fn check_permissions(_storage: &StorageManager, _issues: &mut Vec<Issue>) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
 
     fn setup() -> (tempfile::TempDir, StorageManager, Browser) {
         let tmp = tempfile::tempdir().unwrap();
@@ -475,7 +468,7 @@ mod tests {
     fn dangling_default_symlink_is_detected_and_fixed() {
         let (tmp, storage, browser) = setup();
         let link = tmp.path().join("default-link");
-        symlink(tmp.path().join("gone"), &link).unwrap();
+        crate::storage::create_dir_link(&tmp.path().join("gone"), &link).unwrap();
 
         let issues = run_checks(&storage, browser).unwrap();
         assert_eq!(issues.len(), 1);
@@ -484,7 +477,7 @@ mod tests {
 
         assert_eq!(apply_fixes(&storage, &issues).unwrap(), 1);
         assert!(
-            fs::symlink_metadata(&link).is_err(),
+            !crate::storage::is_dir_link(&link),
             "dangling symlink removed"
         );
     }
@@ -495,7 +488,7 @@ mod tests {
         let link = tmp.path().join("default-link");
         let outside = tmp.path().join("outside-data");
         fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, &link).unwrap();
+        crate::storage::create_dir_link(&outside, &link).unwrap();
 
         let issues = run_checks(&storage, browser).unwrap();
         assert_eq!(issues.len(), 1);
@@ -593,6 +586,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn permissive_base_dir_is_flagged() {
         use std::os::unix::fs::PermissionsExt;
 

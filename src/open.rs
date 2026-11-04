@@ -468,8 +468,15 @@ mod tests {
         std::fs::create_dir_all(&target_dir).unwrap();
         std::fs::write(target_dir.join("test.txt"), "hello").unwrap();
 
+        #[cfg(unix)]
         let mut child = std::process::Command::new("sleep")
             .arg("0.2")
+            .spawn()
+            .unwrap();
+
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "ping", "127.0.0.1", "-n", "1"])
             .spawn()
             .unwrap();
         let pid = child.id();
