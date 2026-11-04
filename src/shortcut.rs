@@ -303,6 +303,7 @@ Categories=Network;WebBrowser;\n",
     }
 
     /// Create Windows standalone shortcut (.lnk).
+    #[cfg_attr(not(windows), allow(unused_variables))]
     fn create_windows_shortcut(
         browser: Browser,
         profile_name: &str,

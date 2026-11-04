@@ -400,7 +400,7 @@ pub fn status(storage: &StorageManager, browser: Browser) -> Result<String> {
 
     #[cfg(target_os = "linux")]
     {
-        status_linux(browser)
+        status_linux(storage, browser)
     }
 
     #[cfg(target_os = "windows")]
@@ -436,6 +436,24 @@ fn status_macos(storage: &StorageManager, browser: Browser) -> Result<String> {
             (false, _) => format!("not installed (expected {})", plist.display()),
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn status_linux(_storage: &StorageManager, browser: Browser) -> Result<String> {
+    let timer = systemd_unit_dir().join(format!("{}.timer", unit_name(browser)));
+    if !timer.exists() {
+        return Ok(format!("not installed (expected {})", timer.display()));
+    }
+    let enabled = Command::new("systemctl")
+        .arg("--user")
+        .args(["is-enabled", &format!("{}.timer", unit_name(browser))])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .unwrap_or_else(|_| "unknown".into());
+    Ok(format!(
+        "installed ({timer}), timer {enabled}; logs: journalctl --user -u {}",
+        unit_name(browser)
+    ))
 }
 
 #[cfg(target_os = "windows")]
