@@ -57,7 +57,7 @@ jobs:
           tar -czf "../../../${ARCHIVE_NAME}" bm bm.1
           cd ../../..
 
-          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
       - name: Upload to GitHub Release
@@ -139,7 +139,7 @@ jobs:
           7z a "../../../${ARCHIVE_NAME}" bm.exe
           cd ../../..
 
-          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          sha256sum "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
 
           # Render Scoop manifest from template

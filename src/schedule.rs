@@ -400,7 +400,7 @@ pub fn status(storage: &StorageManager, browser: Browser) -> Result<String> {
 
     #[cfg(target_os = "linux")]
     {
-        status_linux(storage, browser)
+        status_linux(browser)
     }
 
     #[cfg(target_os = "windows")]
