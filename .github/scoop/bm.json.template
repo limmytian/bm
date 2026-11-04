@@ -1,0 +1,21 @@
+{
+  "version": "__VERSION__",
+  "description": "Browser profile and session sandbox manager for Chrome, Edge, Brave, and Chromium",
+  "homepage": "https://github.com/limmytian/bm",
+  "license": "Apache-2.0",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/limmytian/bm/releases/download/v__VERSION__/bm-__VERSION__-windows-x64.zip",
+      "hash": "__SHA_WINDOWS_X64__"
+    }
+  },
+  "bin": "bm.exe",
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/limmytian/bm/releases/download/v$version/bm-$version-windows-x64.zip"
+      }
+    }
+  }
+}

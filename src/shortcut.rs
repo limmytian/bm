@@ -601,7 +601,10 @@ mod tests {
                 .windows(utf16_bytes.len())
                 .any(|w| w == utf16_bytes.as_slice())
                 || bytes.windows(utf8_bytes.len()).any(|w| w == utf8_bytes);
-            assert!(matched, "New profile directory should be referenced in .lnk shortcut");
+            assert!(
+                matched,
+                "New profile directory should be referenced in .lnk shortcut"
+            );
         } else {
             let content = fs::read_to_string(artifact).unwrap();
             assert!(content.contains(&new_dir_str));

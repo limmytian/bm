@@ -111,9 +111,56 @@ jobs:
             rm -f "$ARCHIVE_NAME" "$ARCHIVE_NAME.sha256"
           done
 
+  build-windows:
+    name: Build (windows-x64)
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build binary
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Package archive
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
+            RAW_TAG="${{ inputs.tag }}"
+          fi
+          VERSION="${RAW_TAG#v}"
+          ARCHIVE_NAME="bm-${VERSION}-windows-x64.zip"
+
+          cd "target/x86_64-pc-windows-msvc/release"
+          7z a "../../../${ARCHIVE_NAME}" bm.exe
+          cd ../../..
+
+          shasum -a 256 "${ARCHIVE_NAME}" > "${ARCHIVE_NAME}.sha256"
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> $GITHUB_ENV
+
+          # Render Scoop manifest from template
+          WIN_SHA=$(awk '{print $1}' "${ARCHIVE_NAME}.sha256")
+          sed -e "s/__VERSION__/${VERSION}/g" \
+              -e "s/__SHA_WINDOWS_X64__/${WIN_SHA}/g" \
+              .github/scoop/bm.json.template > bm.json
+
+      - name: Upload to GitHub Release
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          if [ -z "$RAW_TAG" ] || [ "$RAW_TAG" = "main" ]; then
+            RAW_TAG="${{ inputs.tag }}"
+          fi
+          gh release view "$RAW_TAG" || gh release create "$RAW_TAG" --title "$RAW_TAG" --notes "Release $RAW_TAG"
+          gh release upload "$RAW_TAG" "${ARCHIVE_NAME}" "${ARCHIVE_NAME}.sha256" bm.json --clobber
+
   update-tap:
     name: Update homebrew-tap formula
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     # Runs even when the macOS job was queue-cancelled by free-tier capacity:
     # the per-file checksum guard below is the real gate, so darwin assets
     # may also be supplied out-of-band during runner shortages.

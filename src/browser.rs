@@ -172,18 +172,16 @@ impl Browser {
                     std::env::var_os("USERPROFILE")
                         .map(|p| PathBuf::from(p).join("AppData").join("Local"))
                 })
-                .or_else(|| {
-                    dirs::home_dir().map(|h| h.join("AppData").join("Local"))
-                })
+                .or_else(|| dirs::home_dir().map(|h| h.join("AppData").join("Local")))
                 .ok_or_else(|| {
-                    BmError::Other("Unable to resolve current user's local app data directory".into())
+                    BmError::Other(
+                        "Unable to resolve current user's local app data directory".into(),
+                    )
                 })?;
             match self {
                 Browser::Chrome => Ok(local_data.join("Google/Chrome/User Data")),
                 Browser::Edge => Ok(local_data.join("Microsoft/Edge/User Data")),
-                Browser::Brave => {
-                    Ok(local_data.join("BraveSoftware/Brave-Browser/User Data"))
-                }
+                Browser::Brave => Ok(local_data.join("BraveSoftware/Brave-Browser/User Data")),
                 Browser::Chromium => Ok(local_data.join("Chromium/User Data")),
             }
         } else {

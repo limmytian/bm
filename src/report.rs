@@ -222,7 +222,8 @@ mod tests {
 
         // Managed active profile.
         storage.create_profile("work", None, browser).unwrap();
-        crate::storage::create_dir_link(&storage.profile_dir(browser, "work"), &default_link).unwrap();
+        crate::storage::create_dir_link(&storage.profile_dir(browser, "work"), &default_link)
+            .unwrap();
         storage
             .set_proxy(
                 "work",
@@ -355,7 +356,8 @@ mod tests {
         assert!(v["doctor"].is_object());
 
         // With an active profile the key appears.
-        crate::storage::create_dir_link(&storage.profile_dir(browser, "work"), &default_link).unwrap();
+        crate::storage::create_dir_link(&storage.profile_dir(browser, "work"), &default_link)
+            .unwrap();
         let v = status_json(&storage, browser).unwrap();
         assert_eq!(v["active_profile"], "work");
     }

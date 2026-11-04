@@ -164,18 +164,58 @@ fn sync_windows_policy(browser: Browser, proxy: Option<&ProxyConfig>) -> Result<
     match proxy {
         Some(p) => {
             let _ = Command::new("reg")
-                .args(["add", key_path, "/v", "ProxyMode", "/t", "REG_SZ", "/d", "fixed_servers", "/f"])
+                .args([
+                    "add",
+                    key_path,
+                    "/v",
+                    "ProxyMode",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    "fixed_servers",
+                    "/f",
+                ])
                 .output();
             let _ = Command::new("reg")
-                .args(["add", key_path, "/v", "ProxyServer", "/t", "REG_SZ", "/d", &p.server_string(), "/f"])
+                .args([
+                    "add",
+                    key_path,
+                    "/v",
+                    "ProxyServer",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &p.server_string(),
+                    "/f",
+                ])
                 .output();
             if let Some(bypass) = p.bypass_string() {
                 let _ = Command::new("reg")
-                    .args(["add", key_path, "/v", "ProxyBypassList", "/t", "REG_SZ", "/d", &bypass, "/f"])
+                    .args([
+                        "add",
+                        key_path,
+                        "/v",
+                        "ProxyBypassList",
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        &bypass,
+                        "/f",
+                    ])
                     .output();
             }
             let _ = Command::new("reg")
-                .args(["add", key_path, "/v", "WebRtcIPHandlingPolicy", "/t", "REG_SZ", "/d", "disable_non_proxied_udp", "/f"])
+                .args([
+                    "add",
+                    key_path,
+                    "/v",
+                    "WebRtcIPHandlingPolicy",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    "disable_non_proxied_udp",
+                    "/f",
+                ])
                 .output();
         }
         None => {

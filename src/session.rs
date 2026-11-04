@@ -222,12 +222,10 @@ pub fn encrypt_mock_cookie(plaintext: &str, key: &[u8; 16]) -> Vec<u8> {
 
 #[cfg(windows)]
 fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>> {
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptUnprotectData, CRYPT_INTEGER_BLOB,
-    };
     use std::ptr::null_mut;
+    use windows_sys::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
 
-    let mut in_blob = CRYPT_INTEGER_BLOB {
+    let in_blob = CRYPT_INTEGER_BLOB {
         cbData: data.len() as u32,
         pbData: data.as_ptr() as *mut u8,
     };
@@ -238,7 +236,7 @@ fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>> {
 
     let success = unsafe {
         CryptUnprotectData(
-            &mut in_blob,
+            &in_blob,
             null_mut(),
             null_mut(),
             null_mut(),
@@ -254,9 +252,8 @@ fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>> {
         ));
     }
 
-    let decrypted = unsafe {
-        std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec()
-    };
+    let decrypted =
+        unsafe { std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec() };
     unsafe {
         windows_sys::Win32::Foundation::LocalFree(out_blob.pbData as _);
     }
@@ -267,7 +264,10 @@ fn dpapi_decrypt(data: &[u8]) -> Result<Vec<u8>> {
 pub fn get_windows_master_key(browser: Browser, profile_dir: &Path) -> Result<Vec<u8>> {
     let candidates = [
         profile_dir.join("Local State"),
-        profile_dir.parent().unwrap_or(profile_dir).join("Local State"),
+        profile_dir
+            .parent()
+            .unwrap_or(profile_dir)
+            .join("Local State"),
     ];
     let mut local_state_path = None;
     for c in &candidates {

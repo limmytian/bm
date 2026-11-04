@@ -447,20 +447,14 @@ fn win_task_name(browser: Browser) -> String {
 fn install_windows(_storage: &StorageManager, browser: Browser, keep: usize) -> Result<String> {
     let task = win_task_name(browser);
     let exe = current_exe()?;
-    let action = format!("\"{}\" backup --all --keep {} --browser {}", exe, keep, browser);
+    let action = format!(
+        "\"{}\" backup --all --keep {} --browser {}",
+        exe, keep, browser
+    );
 
     let output = Command::new("schtasks")
         .args([
-            "/create",
-            "/tn",
-            &task,
-            "/tr",
-            &action,
-            "/sc",
-            "daily",
-            "/st",
-            "03:00",
-            "/f",
+            "/create", "/tn", &task, "/tr", &action, "/sc", "daily", "/st", "03:00", "/f",
         ])
         .output()
         .map_err(|e| BmError::Other(format!("Failed to execute schtasks: {e}")))?;
@@ -484,7 +478,9 @@ fn uninstall_windows(browser: Browser) -> Result<String> {
         .map_err(|e| BmError::Other(format!("Failed to execute schtasks: {e}")))?;
 
     if !output.status.success() {
-        return Err(BmError::Other(format!("Scheduled task '{task}' was not found or could not be removed.")));
+        return Err(BmError::Other(format!(
+            "Scheduled task '{task}' was not found or could not be removed."
+        )));
     }
 
     Ok(format!("Removed scheduled backup task '{task}'."))
