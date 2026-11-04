@@ -148,6 +148,11 @@ jobs:
               -e "s/__SHA_WINDOWS_X64__/${WIN_SHA}/g" \
               .github/scoop/bm.json.template > bm.json
 
+          # Render WinGet manifest from template
+          sed -e "s/__VERSION__/${VERSION}/g" \
+              -e "s/__SHA_WINDOWS_X64__/${WIN_SHA}/g" \
+              .github/winget/limmytian.bm.yaml.template > limmytian.bm.yaml
+
       - name: Upload to GitHub Release
         shell: bash
         run: |
@@ -156,7 +161,7 @@ jobs:
             RAW_TAG="${{ inputs.tag }}"
           fi
           gh release view "$RAW_TAG" || gh release create "$RAW_TAG" --title "$RAW_TAG" --notes "Release $RAW_TAG"
-          gh release upload "$RAW_TAG" "${ARCHIVE_NAME}" "${ARCHIVE_NAME}.sha256" bm.json --clobber
+          gh release upload "$RAW_TAG" "${ARCHIVE_NAME}" "${ARCHIVE_NAME}.sha256" bm.json limmytian.bm.yaml --clobber
 
   update-tap:
     name: Update homebrew-tap formula
@@ -230,3 +235,29 @@ jobs:
             git push
             echo "Tap formula updated to ${{ steps.ver.outputs.version }}."
           fi
+
+  update-winget:
+    name: Update WinGet package
+    needs: [build-windows]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check WINGET_TOKEN
+        id: check_token
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.WINGET_TOKEN }}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::WINGET_TOKEN secret is not set. To automate submitting PRs to microsoft/winget-pkgs, add a GitHub PAT (with public_repo and workflow scopes) as repository secret 'WINGET_TOKEN'."
+          fi
+
+      - name: Submit to WinGet Community Repository
+        if: steps.check_token.outputs.has_token == 'true'
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: limmytian.bm
+          installers-regex: '.*-windows-x64\.zip$'
+          token: ${{ secrets.WINGET_TOKEN }}

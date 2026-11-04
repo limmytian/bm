@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+PackageIdentifier: limmytian.bm
+PackageVersion: __VERSION__
+PackageName: bm
+Publisher: limmytian
+PublisherUrl: https://github.com/limmytian
+PublisherSupportUrl: https://github.com/limmytian/bm/issues
+PackageUrl: https://github.com/limmytian/bm
+License: Apache-2.0
+LicenseUrl: https://github.com/limmytian/bm/blob/main/LICENSE
+ShortDescription: Browser profile and session sandbox manager for Chrome, Edge, Brave, and Chromium
+Tags:
+  - browser
+  - profile
+  - sandbox
+  - proxy
+  - chrome
+  - edge
+Commands:
+  - bm
+PackageLocale: en-US
+InstallerType: portable
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/limmytian/bm/releases/download/v__VERSION__/bm-__VERSION__-windows-x64.zip
+    InstallerSha256: __SHA_WINDOWS_X64__
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: bm.exe
+        PortableCommandAlias: bm
+ManifestType: singleton
+ManifestVersion: 1.6.0
