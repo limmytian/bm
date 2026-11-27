@@ -73,7 +73,15 @@ impl ServerHandler for BmMcpServer {
                 let text =
                     serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
                 let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
-                result.structured_content = Some(value);
+                // Pre-2026-07-28 MCP schemas require structuredContent to be
+                // an object; rmcp strips non-object payloads when serving
+                // those peers (every version it negotiates today). Wrap bare
+                // arrays so list-style tools still surface structured output.
+                result.structured_content = Some(if value.is_array() {
+                    serde_json::json!({ "items": value })
+                } else {
+                    value
+                });
                 Ok(result.into())
             }
             Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(e.to_string())]).into()),
