@@ -126,11 +126,7 @@ pub fn is_forbidden_entry(rel_path: &Path) -> bool {
     }
 
     // Direct string matches for safety across nested paths (e.g. Network/Cookies)
-    if rel_str.contains("Network/Cookies") || rel_str.contains("Network\\Cookies") {
-        return true;
-    }
-
-    false
+    rel_str.contains("Network/Cookies") || rel_str.contains("Network\\Cookies")
 }
 
 /// Recursively strip authentication, sync, and account information from
