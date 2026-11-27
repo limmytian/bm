@@ -41,11 +41,6 @@
 
 #### Windows
 
-* **Via WinGet (Microsoft Windows Package Manager)**:
-  ```powershell
-  winget install limmytian.bm
-  ```
-
 * **Via Scoop**:
   ```powershell
   scoop install https://github.com/limmytian/bm/releases/latest/download/bm.json
@@ -56,7 +51,12 @@
 
   Or in a single PowerShell command:
   ```powershell
-  irm https://github.com/limmytian/bm/releases/download/v0.0.10/bm-0.0.10-windows-x64.zip -OutFile "$env:TEMP\bm.zip"; Expand-Archive "$env:TEMP\bm.zip" "$env:TEMP\bm_extracted" -Force; Copy-Item "$env:TEMP\bm_extracted\bm.exe" "$env:LOCALAPPDATA\Microsoft\WindowsApps\bm.exe" -Force
+  irm https://github.com/limmytian/bm/releases/download/v0.0.11/bm-0.0.11-windows-x64.zip -OutFile "$env:TEMP\bm.zip"; Expand-Archive "$env:TEMP\bm.zip" "$env:TEMP\bm_extracted" -Force; Copy-Item "$env:TEMP\bm_extracted\bm.exe" "$env:LOCALAPPDATA\Microsoft\WindowsApps\bm.exe" -Force
+  ```
+
+* **Via WinGet** (not available yet — the package is still in the winget-pkgs review queue, see [#470391](https://github.com/microsoft/winget-pkgs/pull/470391)):
+  ```powershell
+  winget install limmytian.bm
   ```
 
 #### macOS / Linux

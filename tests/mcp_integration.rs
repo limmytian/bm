@@ -247,7 +247,7 @@ fn mcp_group_tools_lifecycle() {
         list_res.get("isError").and_then(serde_json::Value::as_bool),
         Some(false)
     );
-    assert!(list_res["structuredContent"].is_array());
+    assert!(list_res["structuredContent"]["items"].is_array());
 
     // 2. group_create
     let create_res = session.call_tool(
@@ -273,7 +273,7 @@ fn mcp_group_tools_lifecycle() {
             .and_then(serde_json::Value::as_bool),
         Some(false)
     );
-    let groups = list_res2["structuredContent"].as_array().unwrap();
+    let groups = list_res2["structuredContent"]["items"].as_array().unwrap();
     assert!(groups.iter().any(|g| g["name"] == "dev_cluster"));
 
     // 4. group_close on empty/inactive group succeeds cleanly
@@ -310,7 +310,7 @@ fn mcp_lease_tools_lifecycle_and_guarding() {
         list_res.get("isError").and_then(serde_json::Value::as_bool),
         Some(false)
     );
-    assert!(list_res["structuredContent"].is_array());
+    assert!(list_res["structuredContent"]["items"].is_array());
 
     // 2. Acquire lease on missing profile fails with tool error
     let err_acq = session.call_tool(
@@ -387,7 +387,7 @@ fn mcp_profile_lifecycle_and_template_tools() {
         tpl_list.get("isError").and_then(serde_json::Value::as_bool),
         Some(false)
     );
-    assert!(tpl_list["structuredContent"].is_array());
+    assert!(tpl_list["structuredContent"]["items"].is_array());
 
     let tpl_err = session.call_tool(
         "template_inspect",
